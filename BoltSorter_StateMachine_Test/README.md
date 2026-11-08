@@ -48,14 +48,21 @@ This encoder-based sorter test is not the production endpoint-stop controller.
 | `ROTATE_SORTER` | Encoder target reached, motor stopped, then fresh switch press |
 | `WAIT_FLAP_BUTTON` | Another fresh switch press |
 | `RELEASE_FLAP` | Encoder target reached, then 500 ms stopped dwell |
-| `RESET_FLAP` | Reverse flap movement reaches encoder target |
-| `RESET_FUNNEL` | Reverse selected sorter movement reaches encoder target |
+| `RESET_FLAP` | Reverse flap movement reaches encoder target; cycle completes |
 | `FAULT` | Serial `r` returns to waiting, once hardware is configured |
 
-`RESET_FUNNEL` intentionally remains in this requested bench sequence even
-though the updated production sketch no longer centers the sorter. Test targets
-are relative to the actual encoder position at the start of each movement.
-Reset movements reverse the configured test displacement; they are not homing.
+The funnel stays at its selected endpoint after flap reset. A separate logical
+funnel position starts at center (0) on boot and persists between cycles and
+fault recovery. Other operations on the shared motor do not change this logical
+position. These are bench representations of separate mechanisms, not absolute
+positions of the one physical shaft. Encoder targets remain relative movements.
+
+With default directions, center to GOOD is +300, GOOD to BAD is -600, and BAD to
+GOOD is +600 counts. Selecting the same endpoint again keeps the motor off and
+waits for a fresh switch press to confirm it. Switch confirmation anchors the
+logical position at the selected endpoint. A failed sorter move preserves its
+measured partial travel for recovery; reboot assumes center again and does not
+home the mechanism. Diagnostics include funnel position, target, and travel.
 
 ## One complete cycle
 
@@ -66,8 +73,8 @@ Reset movements reverse the configured test displacement; they are not homing.
 4. Wait for all six bolt rotation steps. Send `g` or `b` when prompted.
 5. Wait for the sorter encoder target and the endpoint-confirmation prompt.
    Press and release to confirm the selected endpoint.
-6. At `WAIT_FLAP_BUTTON`, press and release again. Opening, dwell, flap reset,
-   and funnel reset happen automatically. Look for `[CYCLE]` and `WAIT_FOR_BOLT`.
+6. At `WAIT_FLAP_BUTTON`, press and release again. Opening, dwell, and flap reset
+   happen automatically. Look for `[CYCLE]` and `WAIT_FOR_BOLT`; the funnel stays put.
 7. Repeat with the other inspection result to check the opposite sorter direction.
 
 A held switch cannot satisfy multiple transitions. Presses during movement or

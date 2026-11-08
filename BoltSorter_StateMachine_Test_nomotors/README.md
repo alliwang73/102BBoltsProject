@@ -7,11 +7,11 @@ The sketch uses only the standard Arduino core, with no encoder or servo library
 and no PWM initialization. It is compatible with the production sketch's ESP32
 Arduino core 2.x APIs; it does not need the old motor PWM APIs.
 
-The production sketch and motor-enabled test sketch are left unchanged.
+The production sketch is unchanged. Both test versions retain the funnel endpoint.
 
 ## Hardware and configuration
 
-Only **`TEST_SWITCH_PIN = -1`** needs a GPIO assignment. Choose a GPIO exposed on
+Only **`TEST_SWITCH_PIN`** needs a GPIO assignment (currently **33**). Choose a GPIO exposed on
 the HUZZAH32 supporting an internal pull-up; do not use GPIO34–39. Wire switch
 **C to GND** and **NO to that GPIO**. Avoid pins reserved by the board. No motor,
 motor driver, encoder, or servo should be connected for this test.
@@ -38,7 +38,7 @@ and `x` are commands, not count entries. Counts are rejected when no movement is
 pending. Commands in the wrong state produce guidance. Use one response per
 prompt, rather than pasting future movement answers ahead of time.
 
-All eleven states and the original motor-enabled test sequence remain:
+The ten remaining states follow the motor-enabled test sequence:
 
 | State | What advances it |
 | --- | --- |
@@ -50,8 +50,7 @@ All eleven states and the original motor-enabled test sequence remain:
 | `ROTATE_SORTER` | Accepted manual count, then fresh switch press |
 | `WAIT_FLAP_BUTTON` | Another fresh switch press |
 | `RELEASE_FLAP` | Accepted manual count, then non-blocking 500 ms dwell |
-| `RESET_FLAP` | Accepted manual reverse count |
-| `RESET_FUNNEL` | Accepted manual reverse count |
+| `RESET_FLAP` | Accepted manual reverse count, then cycle completes |
 | `FAULT` | Serial `r`, once GPIO configuration is valid |
 
 Release between presses for at least 20 ms; keep presses stable for at least
@@ -69,14 +68,14 @@ from `FAULT` to restart at `WAIT_FOR_BOLT`. Recovery cancels any pending movemen
 
 | Setting | Value / purpose |
 | --- | --- |
-| `TEST_SWITCH_PIN` | `-1`, only remaining GPIO placeholder |
+| `TEST_SWITCH_PIN` | 33, the only hardware GPIO setting |
 | `COUNTS_PER_REV` | 1440 test counts/revolution |
 | Each bolt step | +240 counts, six independent entries |
 | `FEEDER_TEST_COUNTS` | +720 counts |
 | `SORTER_TEST_COUNTS` | Magnitude 300 counts |
 | `FLAP_TEST_COUNTS` | Opening +200, reset -200 counts |
-| `GOOD_DIRECTION` | +1: GOOD +300, BAD -300; change to -1 to reverse |
-| Funnel reset | Opposite selected sorter target: GOOD -300, BAD +300 |
+| `GOOD_DIRECTION` | +1: absolute logical GOOD +300, BAD -300; change to -1 to reverse |
+| Sorter travel | Selected endpoint minus retained funnel position |
 | `POSITION_TOLERANCE` | Strict absolute error <10 counts |
 | `DEBOUNCE_MS` | 20 ms for press and release |
 | `FLAP_DWELL_MS` | 500 ms after opening count is accepted |
@@ -93,8 +92,15 @@ from `FAULT` to restart at `WAIT_FOR_BOLT`. Recovery cancels any pending movemen
 Positive is labeled forward and negative reverse; these are logical test
 directions, not finalized wiring directions. There is no encoder-polarity setting
 or motor GPIO assignment because this sketch has no motor hardware. Counts retain
-the original test placeholders. `RESET_FUNNEL` is retained specifically for this
-test, even though production now leaves the funnel at its selected endpoint.
+the original test placeholders. The funnel stays at its selected endpoint after
+flap reset. Its logical position is separate from all other simulated movements.
+It starts at center (0) on boot and persists between cycles and fault recovery.
+With default directions, center to GOOD is +300, GOOD to BAD is -600, and BAD to
+GOOD is +600 counts. Selecting the same endpoint skips the manual count prompt
+and still requires a fresh physical switch press to confirm it. Confirmation
+anchors the position at the endpoint; before confirmation, the latest submitted
+relative position is retained on a fault. Reboot assumes center, without homing.
+Diagnostics include retained funnel position, selected target, and travel.
 
 ## Example: complete GOOD cycle
 
@@ -162,21 +168,18 @@ accepted counts, action prompts, and every state entry.
 [MOTOR SIM] Target: -200 counts; direction=reverse (-); relative position reset to 0
 > -200
 [ENCODER SIM] Target reached: -200 / -200; simulated motor stopped
-[TRANSITION] RESET_FLAP -> RESET_FUNNEL
-[MOTOR SIM] Target: -300 counts; direction=reverse (-); relative position reset to 0
-> -300
-[ENCODER SIM] Target reached: -300 / -300; simulated motor stopped
-[CYCLE] Full sorting cycle complete.
-[TRANSITION] RESET_FUNNEL -> WAIT_FOR_BOLT
+[CYCLE] Full sorting cycle complete; funnel remains at selected endpoint.
+[TRANSITION] RESET_FLAP -> WAIT_FOR_BOLT
 [STATE] WAIT_FOR_BOLT
 ```
 
-For a BAD cycle, enter `b`, use `-300` for sorter movement, and `300` for funnel
-reset. Other movement targets stay the same. Test `x`, `d`, and `r` separately,
+For the next BAD cycle after GOOD, enter `b` and `-600` for sorter movement.
+A first BAD cycle from center instead uses `-300`. Other targets stay the same.
+Test `x`, `d`, and `r` separately,
 and verify that wrong counts and held switches do not skip steps.
 
 ## Verification status
 
-Source checks verify all eleven states, expected defaults, absence of hardware
-motor/library calls and blocking delays, and unchanged hashes of both existing
-sketches. Arduino compilation and physical switch testing remain unverified.
+Source checks cover the ten-state sequence, retained-position calculations,
+absence of hardware motor/library calls and blocking delays, and the unchanged
+production sketch. Arduino compilation and physical switch testing remain unverified.

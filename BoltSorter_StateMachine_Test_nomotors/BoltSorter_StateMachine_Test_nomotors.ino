@@ -11,7 +11,7 @@
 #include <string.h>
 
 // ---------------- Only hardware placeholder: assign before uploading ----------------
-constexpr int TEST_SWITCH_PIN = -1; // Select an exposed GPIO supporting INPUT_PULLUP.
+constexpr int TEST_SWITCH_PIN = 33; // Select an exposed GPIO supporting INPUT_PULLUP.
 
 // ---------------- Original test values, retained for comparison ----------------
 constexpr long COUNTS_PER_REV = 1440;
@@ -35,7 +35,7 @@ constexpr size_t SERIAL_LINE_CAPACITY = 48; // Includes terminating NUL.
 enum State : uint8_t {
   WAIT_FOR_BOLT, ROTATE_FEEDER_WHEEL, BOLT_CHAMBER, ROTATE_BOLT,
   BUTTON_PRESSED, ROTATE_SORTER, WAIT_FLAP_BUTTON, RELEASE_FLAP,
-  RESET_FLAP, RESET_FUNNEL, FAULT
+  RESET_FLAP, FAULT
 };
 
 // Explicit declarations keep Arduino's prototype generation unambiguous.
@@ -59,7 +59,6 @@ const char *stateName(State s) {
     case WAIT_FLAP_BUTTON: return "WAIT_FLAP_BUTTON";
     case RELEASE_FLAP: return "RELEASE_FLAP";
     case RESET_FLAP: return "RESET_FLAP";
-    case RESET_FUNNEL: return "RESET_FUNNEL";
     case FAULT: return "FAULT";
     default: return "INVALID";
   }
@@ -126,6 +125,8 @@ State state = WAIT_FOR_BOLT;
 unsigned long stateStartMs = 0, phaseStartMs = 0;
 int boltStep = 0;
 long sorterDelta = 0;
+// Independent logical funnel position, initially centered on boot only.
+long sorterPosition = 0, sorterTarget = 0, sorterStartPosition = 0;
 char inspection = 0;
 bool hardwareReady = false, sorterAtTarget = false, flapAtTarget = false;
 char serialLine[SERIAL_LINE_CAPACITY];
@@ -133,6 +134,9 @@ size_t serialLength = 0;
 bool serialOverflow = false;
 
 void fault(const char *reason) {
+  if (state == ROTATE_SORTER && motor.enabled) {
+    sorterPosition = sorterStartPosition + motor.pos; // Preserve latest manual position on recovery.
+  }
   motor.stop();
   Serial.printf("[FAULT] State=%s; reason=%s\n", stateName(state), reason);
   enterState(FAULT);
@@ -166,8 +170,17 @@ void enterState(State next) {
       break;
     case ROTATE_SORTER:
       sorterAtTarget = false;
-      Serial.println("[ACTION] Enter sorter position, THEN press switch to confirm selected endpoint.");
-      motor.moveBy(sorterDelta);
+      sorterStartPosition = sorterPosition;
+      Serial.printf("[SORTER] Position=%ld target=%ld travel=%+ld counts\n",
+                    sorterPosition, sorterTarget, sorterDelta);
+      if (sorterDelta == 0) {
+        motor.pos = motor.target = 0; motor.hasEntry = false;
+        sorterAtTarget = true; phaseStartMs = millis();
+        Serial.println("[ACTION] Already at selected endpoint; no count entry needed. Fresh switch press to confirm.");
+      } else {
+        Serial.println("[ACTION] Enter sorter position, THEN press switch to confirm selected endpoint.");
+        motor.moveBy(sorterDelta);
+      }
       break;
     case WAIT_FLAP_BUTTON:
       Serial.println("[ACTION] Release, then press switch again to release flap.");
@@ -181,10 +194,6 @@ void enterState(State next) {
       Serial.println("[ACTION] Enter reverse flap reset position.");
       motor.moveBy(-FLAP_TEST_COUNTS);
       break;
-    case RESET_FUNNEL:
-      Serial.println("[ACTION] Enter reverse funnel reset position (test only).");
-      motor.moveBy(-sorterDelta);
-      break;
     case FAULT:
       Serial.println("[ACTION] Simulation stopped. Send r to recover, d for diagnostics.");
       break;
@@ -192,6 +201,8 @@ void enterState(State next) {
 }
 
 void diagnostic() {
+  Serial.printf("[DIAGNOSTIC] funnelPosition=%ld funnelTarget=%ld travel=%ld\n",
+                sorterPosition, sorterTarget, sorterDelta);
   bool switchExpected = state == WAIT_FOR_BOLT || state == BOLT_CHAMBER ||
                         state == WAIT_FLAP_BUTTON || (state == ROTATE_SORTER && sorterAtTarget);
   const char *decision = inspection == 'g' ? "GOOD" : inspection == 'b' ? "BAD" : "none";
@@ -284,16 +295,21 @@ void runStateMachine(bool pressed, char cmd, bool moveDone) {
       if (cmd == 'g' || cmd == 'b') {
         inspection = cmd;
         Serial.println(cmd == 'g' ? "[INSPECT] GOOD selected." : "[INSPECT] BAD selected.");
-        sorterDelta = (cmd == 'g' ? GOOD_DIRECTION : -GOOD_DIRECTION) * SORTER_TEST_COUNTS;
+        sorterTarget = (cmd == 'g' ? GOOD_DIRECTION : -GOOD_DIRECTION) * SORTER_TEST_COUNTS;
+        sorterDelta = sorterTarget - sorterPosition;
         enterState(ROTATE_SORTER);
       } else if (ENABLE_INSPECTION_TIMEOUT && millis() - stateStartMs >= INSPECT_TIMEOUT_MS) fault("no inspection input");
       break;
     case ROTATE_SORTER:
       if (moveDone) {
         sorterAtTarget = true; phaseStartMs = millis();
+        sorterPosition = sorterStartPosition + motor.pos;
         Serial.println("[ACTION] Sorter stopped. Release switch, then press to confirm selected endpoint.");
       } else if (sorterAtTarget) {
-        if (pressed) { Serial.println("[EVENT] Sorter endpoint confirmed."); enterState(WAIT_FLAP_BUTTON); }
+        if (pressed) {
+          sorterPosition = sorterTarget; // Switch confirmation anchors the endpoint exactly.
+          Serial.println("[EVENT] Sorter endpoint confirmed."); enterState(WAIT_FLAP_BUTTON);
+        }
         else if (ENABLE_SWITCH_TIMEOUT && millis() - phaseStartMs >= SWITCH_TIMEOUT_MS) fault("no sorter endpoint confirmation");
       }
       break;
@@ -306,10 +322,10 @@ void runStateMachine(bool pressed, char cmd, bool moveDone) {
       if (flapAtTarget && millis() - phaseStartMs >= FLAP_DWELL_MS) enterState(RESET_FLAP);
       break;
     case RESET_FLAP:
-      if (moveDone) enterState(RESET_FUNNEL);
-      break;
-    case RESET_FUNNEL:
-      if (moveDone) { Serial.println("[CYCLE] Full sorting cycle complete."); enterState(WAIT_FOR_BOLT); }
+      if (moveDone) {
+        Serial.println("[CYCLE] Full sorting cycle complete; funnel remains at selected endpoint.");
+        enterState(WAIT_FOR_BOLT);
+      }
       break;
     case FAULT:
       if (cmd == 'r') {

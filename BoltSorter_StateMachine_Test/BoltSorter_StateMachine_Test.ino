@@ -34,7 +34,7 @@ constexpr unsigned long DEBOUNCE_MS = 20;
 enum State : uint8_t {
   WAIT_FOR_BOLT, ROTATE_FEEDER_WHEEL, BOLT_CHAMBER, ROTATE_BOLT,
   BUTTON_PRESSED, ROTATE_SORTER, WAIT_FLAP_BUTTON, RELEASE_FLAP,
-  RESET_FLAP, RESET_FUNNEL, FAULT
+  RESET_FLAP, FAULT
 };
 
 const char *stateName(State s) {
@@ -48,7 +48,6 @@ const char *stateName(State s) {
     case WAIT_FLAP_BUTTON: return "WAIT_FLAP_BUTTON";
     case RELEASE_FLAP: return "RELEASE_FLAP";
     case RESET_FLAP: return "RESET_FLAP";
-    case RESET_FUNNEL: return "RESET_FUNNEL";
     case FAULT: return "FAULT";
     default: return "INVALID";
   }
@@ -149,6 +148,9 @@ State state = WAIT_FOR_BOLT;
 unsigned long stateStartMs = 0, phaseStartMs = 0, lastControlUs = 0;
 int boltStep = 0;
 long sorterDelta = 0;
+// Independent logical funnel position: other shared-motor operations do not alter it.
+// Bench assumption: funnel starts at center on boot; recovery does not recenter it.
+long sorterPosition = 0, sorterTarget = 0, sorterStartPosition = 0;
 bool hardwareReady = false, sorterAtTarget = false, flapAtTarget = false;
 
 void enterState(State next);
@@ -156,6 +158,9 @@ void fault(const char *reason);
 bool validPins();
 
 void fault(const char *reason) {
+  if (state == ROTATE_SORTER && motor.enabled) {
+    sorterPosition = sorterStartPosition + (long)(motor.count() - motor.origin);
+  }
   motor.stop(); // Stop before serial output, including on timeout.
   Serial.printf("[FAULT] State=%s; reason=%s\n", stateName(state), reason);
   enterState(FAULT);
@@ -188,8 +193,17 @@ void enterState(State next) {
       break;
     case ROTATE_SORTER:
       sorterAtTarget = false;
-      Serial.println("[ACTION] Wait for encoder target, THEN press switch to confirm endpoint.");
-      motor.moveBy(sorterDelta);
+      sorterStartPosition = sorterPosition;
+      Serial.printf("[SORTER] Position=%ld target=%ld travel=%+ld counts\n",
+                    sorterPosition, sorterTarget, sorterDelta);
+      if (sorterDelta == 0) {
+        motor.pos = motor.target = 0;
+        sorterAtTarget = true; phaseStartMs = millis();
+        Serial.println("[ACTION] Already at selected endpoint; motor stays off. Fresh switch press to confirm (10 s).");
+      } else {
+        Serial.println("[ACTION] Wait for encoder target, THEN press switch to confirm endpoint.");
+        motor.moveBy(sorterDelta);
+      }
       break;
     case WAIT_FLAP_BUTTON:
       Serial.println("[ACTION] Release, then press switch again to release flap (10 s).");
@@ -203,10 +217,6 @@ void enterState(State next) {
       Serial.println("[ACTION] Encoder-controlled flap reset.");
       motor.moveBy(-FLAP_TEST_COUNTS);
       break;
-    case RESET_FUNNEL:
-      Serial.println("[ACTION] Encoder-controlled funnel reset (bench test only).");
-      motor.moveBy(-sorterDelta);
-      break;
     case FAULT:
       Serial.println("[ACTION] Motor stopped. Send r to recover, d for diagnostic.");
       break;
@@ -214,6 +224,8 @@ void enterState(State next) {
 }
 
 void diagnostic() {
+  Serial.printf("[DIAGNOSTIC] funnelPosition=%ld funnelTarget=%ld travel=%ld\n",
+                sorterPosition, sorterTarget, sorterDelta);
   Serial.printf("[DIAGNOSTIC] state=%s ready=%d enabled=%d PWM=%d\n",
                 stateName(state), hardwareReady, motor.enabled, motor.drive);
   if (hardwareReady) {
@@ -249,17 +261,20 @@ void runStateMachine(bool pressed, char cmd, bool moveDone) {
     case BUTTON_PRESSED:
       if (cmd == 'g' || cmd == 'b') {
         Serial.println(cmd == 'g' ? "[INSPECT] GOOD selected." : "[INSPECT] BAD selected.");
-        sorterDelta = (cmd == 'g' ? GOOD_DIRECTION : -GOOD_DIRECTION) * SORTER_TEST_COUNTS;
+        sorterTarget = (cmd == 'g' ? GOOD_DIRECTION : -GOOD_DIRECTION) * SORTER_TEST_COUNTS;
+        sorterDelta = sorterTarget - sorterPosition;
         enterState(ROTATE_SORTER);
       } else if (millis() - stateStartMs >= INSPECT_TIMEOUT_MS) fault("no inspection input");
       break;
     case ROTATE_SORTER:
       if (moveDone) {
+        sorterPosition = sorterStartPosition + motor.pos;
         sorterAtTarget = true; phaseStartMs = millis();
         Serial.println("[ACTION] Sorter stopped. Release switch, then press to confirm endpoint (10 s).");
         // A press coincident with completion is not used as endpoint confirmation.
       } else if (sorterAtTarget) {
         if (pressed) {
+          sorterPosition = sorterTarget; // Confirmed endpoint anchors the logical position.
           Serial.println("[EVENT] Sorter endpoint confirmed."); enterState(WAIT_FLAP_BUTTON);
         } else if (millis() - phaseStartMs >= SWITCH_TIMEOUT_MS) fault("no sorter endpoint confirmation");
       }
@@ -274,11 +289,9 @@ void runStateMachine(bool pressed, char cmd, bool moveDone) {
       if (flapAtTarget && millis() - phaseStartMs >= FLAP_DWELL_MS) enterState(RESET_FLAP);
       break;
     case RESET_FLAP:
-      if (moveDone) enterState(RESET_FUNNEL);
-      break;
-    case RESET_FUNNEL:
       if (moveDone) {
-        Serial.println("[CYCLE] Full sorting cycle complete."); enterState(WAIT_FOR_BOLT);
+        Serial.println("[CYCLE] Full sorting cycle complete; funnel remains at selected endpoint.");
+        enterState(WAIT_FOR_BOLT);
       }
       break;
     case FAULT:
