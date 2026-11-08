@@ -5,7 +5,7 @@
 //  Axes:
 //    feeder    = hobby servo
 //    boltMotor = DC motor + encoder (60 deg steps)
-//    sorter    = DC motor + encoder
+//    sorter    = DC motor + two endpoint limit switches (MODIFIED)
 //    flap      = DC motor + encoder
 //
 //  Serial commands (115200 baud):
@@ -28,9 +28,11 @@
 #define BOLT_ENC_B  27
 #define BOLT_PWM_F  26
 #define BOLT_PWM_R  25
-// sorter (DC + encoder)
-#define SORT_ENC_A  34
-#define SORT_ENC_B  35
+// MODIFIED: sorter endpoint switches; placeholder GPIOs, change for your build.
+// Wire each switch between its input and GND (active LOW with internal pull-up).
+#define GOOD_LIMIT_PIN 19
+#define BAD_LIMIT_PIN  23
+// sorter motor driver (unchanged)
 #define SORT_PWM_F  14
 #define SORT_PWM_R  32
 // flap (DC + encoder)
@@ -43,9 +45,9 @@
 
 // ---------------- Tuning ----------------
 #define COUNTS_PER_REV     1440     // bolt motor output-shaft counts per rev
-#define SORT_GOOD_POS      300      // encoder counts
-#define SORT_BAD_POS      -300
-#define SORT_HOME_POS      0
+// MODIFIED: fixed sorter drive; tune duty and directions after assembly.
+#define SORT_DRIVE_PWM     150      // 8-bit duty: 1..255
+#define SORT_GOOD_FORWARD  true     // swap to false if GOOD is reverse
 #define FLAP_OPEN_POS      200      // encoder counts
 #define FLAP_CLOSED_POS    0
 #define FLAP_DWELL_MS      500      // hold flap open so the bolt can drop
@@ -108,6 +110,26 @@ struct DCAxis {
     }
     if (drive > 0) { ledcWrite(chRev, 0);      ledcWrite(chFwd, drive); }
     else           { ledcWrite(chFwd, 0);      ledcWrite(chRev, -drive); }
+  }
+};
+
+// MODIFIED: sorter uses the same two PWM driver inputs, without an encoder.
+struct SorterAxis {
+  uint8_t chFwd = 4, chRev = 5;
+
+  void begin(int pinFwd, int pinRev, uint8_t chF, uint8_t chR) {
+    chFwd = chF; chRev = chR;
+    ledcSetup(chFwd, 20000, 8); ledcAttachPin(pinFwd, chFwd);
+    ledcSetup(chRev, 20000, 8); ledcAttachPin(pinRev, chRev);
+    stop();
+  }
+  void stop() {
+    ledcWrite(chFwd, 0);
+    ledcWrite(chRev, 0);
+  }
+  void drive(bool forward) {
+    stop();
+    ledcWrite(forward ? chFwd : chRev, SORT_DRIVE_PWM);
   }
 };
 
@@ -177,7 +199,7 @@ struct ServoAxis {
 };
 
 DCAxis    boltMotor;
-DCAxis    sorter;
+SorterAxis sorter;                  // MODIFIED: no sorter encoder
 DCAxis    flap;
 ServoAxis feeder;
 
@@ -192,7 +214,6 @@ enum State : byte {
   WAIT_FLAP_BUTTON,    // waiting for operator flap command
   RELEASE_FLAP,
   RESET_FLAP,
-  RESET_FUNNEL,
   FAULT
 };
 State state = WAIT_FOR_BOLT;
@@ -266,11 +287,20 @@ bool boltSeated() {                  // limit switch held for SEAT_TIME_MS
 }
 
 bool rotateBoltStepDone() { return boltMotor.done(); }
-bool sorterRotated()      { return sorter.done(); }
+// MODIFIED: stop on the selected endpoint immediately; never debounce by driving
+// farther into the stop. The state machine advances only after stop() is called.
+bool sorterRotated() {
+  if (sorterInitial != 1 && sorterInitial != 2) return false;
+  int targetPin = (sorterInitial == 1) ? GOOD_LIMIT_PIN : BAD_LIMIT_PIN;
+  if (digitalRead(targetPin) == LOW) {
+    sorter.stop();
+    return true;
+  }
+  return false;
+}
 bool flapButtonPress()    { return cmd == 'f'; }
 bool flapReleased()       { return flap.done() && timedOut(FLAP_DWELL_MS); }
 bool flapReset()          { return flap.done(); }
-bool funnelReset()        { return sorter.done(); }
 
 // ---------------- Event services ----------------
 void stopAllMotors() {
@@ -304,7 +334,7 @@ void setState(State next) {
       dispenseJam = false;
       noInterrupts(); BLUEflag = false; debounceT = false; interrupts();
       flap.moveTo(FLAP_CLOSED_POS);
-      sorter.moveTo(SORT_HOME_POS);
+      sorter.stop();                         // MODIFIED: leave funnel at last position
       break;
     case ROTATE_FEEDER_WHEEL:
       Serial.println("[FEEDER] Rotating feeder wheel...");
@@ -325,7 +355,15 @@ void setState(State next) {
       break;
     case ROTATE_SORTER:
       Serial.println("[SORTER] Moving sorter...");
-      sorter.moveTo(sorterInitial == 1 ? SORT_GOOD_POS : SORT_BAD_POS);
+      // MODIFIED: do not energize the motor if already at the requested limit.
+      sorter.stop();
+      if (sorterInitial != 1 && sorterInitial != 2) {
+        fault("invalid sorter selection");
+      } else if (sorterRotated()) {
+        setState(WAIT_FLAP_BUTTON);
+      } else {
+        sorter.drive(sorterInitial == 1 ? SORT_GOOD_FORWARD : !SORT_GOOD_FORWARD);
+      }
       break;
     case WAIT_FLAP_BUTTON:
       Serial.println("[FLAP] Press 'f' to release the flap within 10 s");
@@ -337,10 +375,6 @@ void setState(State next) {
     case RESET_FLAP:
       Serial.println("[FLAP] Closing...");
       flap.moveTo(FLAP_CLOSED_POS);
-      break;
-    case RESET_FUNNEL:
-      Serial.println("[FUNNEL] Resetting sorter...");
-      sorter.moveTo(SORT_HOME_POS);
       break;
     case FAULT:
       Serial.println("[FAULT] Press 'r' to reset");
@@ -389,7 +423,7 @@ void runStateMachine() {
 
     case ROTATE_SORTER:
       if (sorterRotated())                    setState(WAIT_FLAP_BUTTON);
-      else if (timedOut(MOVE_TIMEOUT_MS))     fault("sorter did not rotate");
+      else if (timedOut(MOVE_TIMEOUT_MS))     fault("sorter limit not reached");
       break;
 
     case WAIT_FLAP_BUTTON:
@@ -403,13 +437,8 @@ void runStateMachine() {
       break;
 
     case RESET_FLAP:
-      if (flapReset())                        setState(RESET_FUNNEL);
+      if (flapReset())                        setState(WAIT_FOR_BOLT); // MODIFIED: no centering
       else if (timedOut(MOVE_TIMEOUT_MS))     fault("flap reset failed");
-      break;
-
-    case RESET_FUNNEL:
-      if (funnelReset())                      setState(WAIT_FOR_BOLT);
-      else if (timedOut(MOVE_TIMEOUT_MS))     fault("funnel reset failed");
       break;
 
     case FAULT:
@@ -428,6 +457,9 @@ void setup() {
   Serial.begin(115200);
   pinMode(BOLT_BTN, INPUT);       // GPIO36/39 have no internal pull-ups
   pinMode(LIMIT_PIN, INPUT);
+  // MODIFIED: use GPIOs supporting internal pull-ups (not GPIO34-39).
+  pinMode(GOOD_LIMIT_PIN, INPUT_PULLUP);
+  pinMode(BAD_LIMIT_PIN, INPUT_PULLUP);
 
   ESP32Encoder::useInternalWeakPullResistors = puType::up;
 
@@ -438,7 +470,7 @@ void setup() {
   feeder.begin(FEEDER_PIN, FEEDER_START_ANGLE);
 
   boltMotor.begin(BOLT_ENC_A, BOLT_ENC_B, BOLT_PWM_F, BOLT_PWM_R, 2, 3);
-  sorter.begin(SORT_ENC_A, SORT_ENC_B, SORT_PWM_F, SORT_PWM_R, 4, 5);
+  sorter.begin(SORT_PWM_F, SORT_PWM_R, 4, 5); // MODIFIED: PWM only
   flap.begin(FLAP_ENC_A, FLAP_ENC_B, FLAP_PWM_F, FLAP_PWM_R, 6, 7);
 
   // Debounce timer (one-shot, started from the button ISR)
@@ -463,6 +495,13 @@ void setup() {
 
 // ---------------- Main loop ----------------
 void loop() {
+  // MODIFIED: check every loop pass, independently of the 10 ms control tick.
+  // Once stopped at an endpoint, the motor stays off until the next sort command.
+  if (state == ROTATE_SORTER) {
+    if (sorterRotated()) setState(WAIT_FLAP_BUTTON);
+    else if (timedOut(MOVE_TIMEOUT_MS)) fault("sorter limit not reached");
+  }
+
   // Update the servo independently of the 10 ms motor-control tick.
   // This allows its 15 ms stepping interval to run without blocking the state machine.
   feeder.update();
@@ -480,7 +519,6 @@ void loop() {
     }
 
     boltMotor.update();
-    sorter.update();
     flap.update();
     runStateMachine();
   }
