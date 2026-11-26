@@ -71,7 +71,7 @@ Follow the checklist at the end of [WIRING.md](WIRING.md). In short:
    raise Kd. Stopping short or slow means raise Ki or the friction PWM. The defaults are
    your `gearmotor_position_control.ino` tuning.
 5. **Positions**: set the flap's open/closed angles, the hatch's GOOD/BAD angles, the servo's load/drop
-   angles, and the inspection speed (default 40°/s) and turn (default 360°).
+   angles, the inspection speed and turn (defaults 30°/s and 400°, about 13 s per bolt), and the hatch-to-flap wait (default 1.5 s).
 6. **Save to flash.** Positions are zeroed at boot, so power up with the flap closed
    and the hatch centered.
 

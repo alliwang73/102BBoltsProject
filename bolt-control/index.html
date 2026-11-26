@@ -332,7 +332,7 @@ const AXF = [['kp', 'Kp (PWM/°)'], ['ki', 'Ki (PWM/°·s)'], ['kd', 'Kd (PWM pe
 const AXEXTRA = [
   [['ispd', 'Inspection speed (°/s)'], ['ideg', 'Inspection turn (°)']],
   [['fopen', 'Open angle (°)'], ['fclose', 'Closed angle (°)'], ['fdwell', 'Open dwell (ms)']],
-  [['hgood', 'GOOD bin angle (°)'], ['hbad', 'BAD bin angle (°)'], ['hlim', 'Use limit switches', 'b']]];
+  [['hgood', 'GOOD bin angle (°)'], ['hbad', 'BAD bin angle (°)'], ['hdelay', 'Wait before flap opens (ms)'], ['hlim', 'Use limit switches', 'b']]];
 const SVF = [['svload', 'Load angle (°)'], ['svdrop', 'Drop angle (°)'], ['svspd', 'Speed (°/s)'], ['svhold', 'Hold at end (ms)'], ['svret', 'Return to load after each drop', 'b'], ['svmin', 'Pulse at 0° (µs)'], ['svmax', 'Pulse at 180° (µs)']];
 const SEQF = [['settle', 'Settle before inspect (ms)'], ['vto', 'Verdict timeout (ms)'], ['vfb', 'If no verdict', 's', [[0, 'Send to BAD bin'], [1, 'Send to GOOD bin'], [2, 'Wait for manual'], [3, 'Fault']]], ['bsens', 'Wait for bolt sensor', 'b'], ['gap', 'Feed gap without sensor (ms)'], ['mto', 'Move timeout (ms)']];
 

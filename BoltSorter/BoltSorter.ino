@@ -105,10 +105,11 @@ struct Config {
   float vto, vfb;              // verdict timeout ms; fallback 0=BAD 1=GOOD 2=wait 3=fault
   float fopen, fclose, fdwell; // flap angles (deg) and open dwell (ms)
   float hgood, hbad, hlim;     // hatch angles (deg); 1 = use limit switches
+  float hdelay;                // ms to wait after the hatch arrives before the flap opens
   float svload, svdrop, svspd, svhold, svret, svmin, svmax; // feeder servo
   float bsens, gap, mto;       // 1 = wait for bolt sensor; ms between auto feeds; move timeout ms
 };
-constexpr uint32_t CFG_VERSION = 3;
+constexpr uint32_t CFG_VERSION = 4;
 
 Config cfg;
 
@@ -116,10 +117,10 @@ void setDefaults() {
   const AxisCfg d = {12.0f * 75.81f, 8.0f, 25.0f, 0.15f, 45.0f, 360.0f, 1500.0f, 0.5f, 230.0f, 0, 0};
   for (int i = 0; i < NUM_AX; i++) cfg.ax[i] = d;
   cfg.ax[TUBE].tol = 1.0f;
-  cfg.ispd = 40;   cfg.ideg = 360;  cfg.settle = 800;
+  cfg.ispd = 30;   cfg.ideg = 400;  cfg.settle = 800;   // a bit more than one full turn, slowly (~13 s)
   cfg.vto = 5000;  cfg.vfb = 0;
-  cfg.fopen = 90;  cfg.fclose = 0;  cfg.fdwell = 600;
-  cfg.hgood = 45;  cfg.hbad = -45;  cfg.hlim = 0;
+  cfg.fopen = 120; cfg.fclose = 0;  cfg.fdwell = 1000;  // open 120 deg, hold 1 s, back to 0
+  cfg.hgood = 45;  cfg.hbad = -45;  cfg.hlim = 0;  cfg.hdelay = 1500;
   cfg.svload = 0;  cfg.svdrop = 180; cfg.svspd = 133; cfg.svhold = 700; cfg.svret = 0;
   cfg.svmin = 500; cfg.svmax = 2400;
   cfg.bsens = 0;   cfg.gap = 1500;  cfg.mto = 4000;
@@ -140,6 +141,7 @@ Setting SETTINGS[] = {
   {"settle", &cfg.settle, 0, 10000}, {"vto", &cfg.vto, 500, 60000}, {"vfb", &cfg.vfb, 0, 3},
   {"fopen", &cfg.fopen, -720, 720},  {"fclose", &cfg.fclose, -720, 720}, {"fdwell", &cfg.fdwell, 0, 10000},
   {"hgood", &cfg.hgood, -720, 720},  {"hbad", &cfg.hbad, -720, 720},     {"hlim", &cfg.hlim, 0, 1},
+  {"hdelay", &cfg.hdelay, 0, 10000},
   {"svload", &cfg.svload, 0, 180},   {"svdrop", &cfg.svdrop, 0, 180},   {"svspd", &cfg.svspd, 5, 1000},
   {"svhold", &cfg.svhold, 0, 10000}, {"svret", &cfg.svret, 0, 1},
   {"svmin", &cfg.svmin, 400, 1500},  {"svmax", &cfg.svmax, 1500, 2600},
@@ -513,9 +515,11 @@ void machineTick() {
       }
       break;
 
-    case M_SORT:
-      if (hatchArrived()) enter(M_RELEASE);
-      else if (el > cfg.mto) faultMachine("hatch did not reach its bin position");
+    case M_SORT:   // hatch to the bin, then wait hdelay so it is settled before the flap opens
+      if (hatchArrived()) {
+        if (!sub) { sub = 1; subAt = millis(); }
+        if (millis() - subAt >= cfg.hdelay) enter(M_RELEASE);
+      } else if (el > cfg.mto + (sub ? cfg.hdelay : 0)) faultMachine("hatch did not reach its bin position");
       break;
 
     case M_RELEASE:
@@ -1420,7 +1424,7 @@ const AXF = [['kp', 'Kp (PWM/°)'], ['ki', 'Ki (PWM/°·s)'], ['kd', 'Kd (PWM pe
 const AXEXTRA = [
   [['ispd', 'Inspection speed (°/s)'], ['ideg', 'Inspection turn (°)']],
   [['fopen', 'Open angle (°)'], ['fclose', 'Closed angle (°)'], ['fdwell', 'Open dwell (ms)']],
-  [['hgood', 'GOOD bin angle (°)'], ['hbad', 'BAD bin angle (°)'], ['hlim', 'Use limit switches', 'b']]];
+  [['hgood', 'GOOD bin angle (°)'], ['hbad', 'BAD bin angle (°)'], ['hdelay', 'Wait before flap opens (ms)'], ['hlim', 'Use limit switches', 'b']]];
 const SVF = [['svload', 'Load angle (°)'], ['svdrop', 'Drop angle (°)'], ['svspd', 'Speed (°/s)'], ['svhold', 'Hold at end (ms)'], ['svret', 'Return to load after each drop', 'b'], ['svmin', 'Pulse at 0° (µs)'], ['svmax', 'Pulse at 180° (µs)']];
 const SEQF = [['settle', 'Settle before inspect (ms)'], ['vto', 'Verdict timeout (ms)'], ['vfb', 'If no verdict', 's', [[0, 'Send to BAD bin'], [1, 'Send to GOOD bin'], [2, 'Wait for manual'], [3, 'Fault']]], ['bsens', 'Wait for bolt sensor', 'b'], ['gap', 'Feed gap without sensor (ms)'], ['mto', 'Move timeout (ms)']];
 

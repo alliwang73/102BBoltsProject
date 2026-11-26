@@ -111,7 +111,7 @@ details summary{cursor:pointer;color:var(--mut);font-weight:600;min-height:32px}
     </div>
   </div>
   <div class="sweep" id="sweep" aria-label="Frames captured around the bolt"><span class="cur" id="sweepCur" style="left:0"></span></div>
-  <div class="maplab"><span>0°</span><span>Tube rotation · one mark per frame</span><span>360°</span></div>
+  <div class="maplab"><span>0°</span><span>Tube rotation · one mark per frame</span><span id="sweepEnd">400°</span></div>
   <div class="ctl">
     <label class="ck"><input type="checkbox" id="autoSend" checked> Send verdicts automatically</label>
     <button data-cmd="run" class="btn pri">Run</button><button data-cmd="single">One bolt</button><button data-cmd="stop">Stop</button>
@@ -977,6 +977,7 @@ link.on('status', s => {
   else if (s.st !== 'AWAIT_VERDICT' && $('mMsg').textContent.startsWith('The tube')) mMsg('');
   maybeDecide();
 });
+link.on('config', m => { if (m.v && m.v.ideg) $('sweepEnd').textContent = Math.round(m.v.ideg) + '°'; });
 link.on('open', name => { $('linkChip').textContent = name; $('linkChip').classList.add('on'); mMsg(''); });
 link.on('close', why => { $('linkChip').textContent = why; $('linkChip').classList.remove('on'); });
 document.querySelectorAll('.mach [data-cmd]').forEach(b => b.onclick = () => link.send(b.dataset.cmd).then(r => r && r.msg && mMsg(r.msg)).catch(e => mMsg(e.message)));
