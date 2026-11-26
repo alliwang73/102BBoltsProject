@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>BoltSorter Control</title>
+<style>
+/* Shop-floor control panel. Same tokens as the inspector; system fonts so it works offline from the ESP32. */
+:root{color-scheme:light;--bg:#fff;--ink:#16191d;--mut:#5b636c;--line:#dde1e5;--panel:#f2f4f6;--blue:#1f4fd1;--ok:#137a3a;--warn:#a35f00;--bad:#c4161c;
+ --s1:#257de0;--s2:#f47230;--grid:#e6e9ec;--band:rgba(19,122,58,.12)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#111418;--ink:#e8ebee;--mut:#9aa3ad;--line:#2a3037;--panel:#1a1f25;--blue:#6f93ff;--ok:#3fca73;--warn:#f0a53a;--bad:#ff5a5f;--s1:#338ced;--s2:#e76624;--grid:#232a31;--band:rgba(63,202,115,.14)}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#111418;--ink:#e8ebee;--mut:#9aa3ad;--line:#2a3037;--panel:#1a1f25;--blue:#6f93ff;--ok:#3fca73;--warn:#f0a53a;--bad:#ff5a5f;--s1:#338ced;--s2:#e76624;--grid:#232a31;--band:rgba(63,202,115,.14)}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:1180px;margin:0 auto;padding:16px max(16px,3vw)}
+h1,h2,h3{font-family:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;font-weight:700;line-height:1.1;margin:0}
+h1{font-size:26px}h2{font-size:19px;margin-bottom:10px}h3{font-size:16px;margin:14px 0 6px}
+.top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.conn{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{font-size:13px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--panel);border:1px solid var(--line);color:var(--mut)}
+.chip.on{color:var(--ok);border-color:var(--ok)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:16px;margin-top:14px}
+@media(max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px}
+button,select,input{font:inherit;color:var(--ink)}
+button{min-height:42px;padding:0 14px;border-radius:9px;border:1px solid var(--line);background:var(--bg);cursor:pointer;font-weight:600}
+button.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+button.okb{border-color:var(--ok);color:var(--ok)}button.badb{border-color:var(--bad);color:var(--bad)}
+button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+input[type=number],input[type=text],select{min-height:40px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);width:100%}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.row>input{flex:1 1 90px;width:auto}
+.state{font-family:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;font-weight:700;font-size:40px;line-height:1;letter-spacing:.5px}
+.state.IDLE{color:var(--mut)}.state.FAULT{color:var(--bad)}.state.INSPECT,.state.AWAIT_VERDICT{color:var(--blue)}
+.sub{color:var(--mut);font-size:14px}
+.bar{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin-top:10px}.bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .25s}
+.flt{margin-top:10px;padding:10px 12px;border-radius:8px;border-left:4px solid var(--bad);background:var(--bg);color:var(--bad);font-weight:600}
+.tally{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px;text-align:center}
+.tally div{background:var(--bg);border-radius:8px;padding:8px 4px;border:1px solid var(--line)}
+.tally b{display:block;font-size:24px;font-variant-numeric:tabular-nums}
+.tally span{font-size:12px;color:var(--mut)}
+.leds{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:13px;color:var(--mut)}
+.leds span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px;background:var(--line);border:1px solid var(--mut)}
+.leds span.on::before{background:var(--ok);border-color:var(--ok)}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs button{border:0;border-bottom:3px solid transparent;border-radius:0;background:none;color:var(--mut);min-height:40px}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--blue)}
+.read{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px}
+.read div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.read span{display:block;font-size:12px;color:var(--mut)}.read b{font-size:18px;font-variant-numeric:tabular-nums}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.fields label{font-size:12px;color:var(--mut);display:block}
+.fields label.ck{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink);min-height:40px;margin-top:14px}
+.fields input[type=checkbox]{width:20px;height:20px}
+details{margin-top:12px}summary{cursor:pointer;font-weight:600;color:var(--mut);min-height:32px}
+.note{font-size:13px;color:var(--mut);margin:6px 0 0}
+.chart{position:relative;margin-top:10px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mut);margin-top:6px}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid var(--c);vertical-align:middle;margin-right:6px}
+.legend i.d{border-top-style:dashed}
+.tip{position:absolute;pointer-events:none;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:8px}
+.dock{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px max(16px,3vw) calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;justify-content:center;z-index:5}
+.dock button{flex:1 1 0;max-width:220px;min-height:48px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;z-index:6}
+.toast.show{opacity:1}.toast.err{background:var(--bad);color:#fff}
+.verd{display:none;margin-top:12px;padding:10px;border-radius:10px;border:2px dashed var(--blue)}
+.verd.show{display:block}
+.hide{display:none!important}
+.dirty{color:var(--warn);font-weight:600;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <div><h1>BoltSorter control</h1><div class="sub">Tune, jog and run the four actuators</div></div>
+  <div class="conn">
+    <span class="chip" id="linkChip">Not connected</span>
+    <button id="btBtn">Connect Bluetooth</button>
+    <input type="text" id="addr" value="192.168.4.1" aria-label="ESP32 address" style="width:150px">
+    <button id="wifiBtn">Connect Wi-Fi</button>
+  </div>
+</div>
+<p class="note" id="connHint"></p>
+
+<div class="grid">
+<section>
+  <div class="card">
+    <div class="sub">Machine state</div>
+    <div class="state IDLE" id="st">—</div>
+    <div class="sub" id="stSub">Connect to see live status</div>
+    <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+    <div class="flt hide" id="flt"></div>
+    <div class="row">
+      <button class="pri" data-cmd="run">Run</button>
+      <button data-cmd="single">One bolt</button>
+      <button data-cmd="finish">Finish &amp; stop</button>
+      <button data-cmd="trigger" id="trigBtn">Bolt loaded</button>
+      <button data-cmd="reset" id="resetBtn">Reset fault</button>
+    </div>
+    <div class="verd" id="verd">
+      <b>Waiting for a verdict</b> <span class="sub">(the inspector page sends this automatically)</span>
+      <div class="row"><button class="okb" data-cmd="v g manual">Good</button><button class="badb" data-cmd="v b manual">Bad</button><button data-cmd="v e manual">Empty</button></div>
+    </div>
+    <div class="tally">
+      <div><b id="nG">0</b><span>Good</span></div>
+      <div><b id="nB">0</b><span>Bad</span></div>
+      <div><b id="nE">0</b><span>Empty</span></div>
+      <div><b id="nT">0</b><span>No verdict</span></div>
+    </div>
+    <div class="sub" style="margin-top:8px" id="lastV">No bolts sorted yet</div>
+    <div class="leds">
+      <span id="inBolt">Bolt sensor</span><span id="inLG">Good limit</span><span id="inLB">Bad limit</span><span id="inBtn">SW38</span>
+    </div>
+    <div class="row"><button data-cmd="tally reset">Clear tally</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Cycle settings</h2>
+    <div class="fields" id="seqFields"></div>
+    <p class="note">No bolt sensor: in Run the feeder cycles every "feed gap" and the camera reports empty tubes. Fallback picks the bin when the inspector doesn't answer in time.</p>
+  </div>
+
+  <div class="card">
+    <h2>Settings storage</h2>
+    <div class="row">
+      <button class="pri" data-cmd="save" id="saveBtn">Save to flash</button>
+      <button data-cmd="load">Reload saved</button>
+      <button data-cmd="defaults">Factory defaults</button>
+      <span class="dirty hide" id="dirty">Unsaved changes</span>
+    </div>
+    <p class="note">Changes take effect immediately but are lost at power-off until saved.</p>
+  </div>
+</section>
+
+<section>
+  <div class="card">
+    <div class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-tab="0" aria-selected="true">Tube</button>
+      <button role="tab" data-tab="1" aria-selected="false">Flap</button>
+      <button role="tab" data-tab="2" aria-selected="false">Hatch</button>
+      <button role="tab" data-tab="3" aria-selected="false">Feeder servo</button>
+    </div>
+
+    <div id="axisPane">
+      <div class="read">
+        <div><span>Angle</span><b id="aA">—</b></div>
+        <div><span>Target</span><b id="aT">—</b></div>
+        <div><span>Error</span><b id="aE">—</b></div>
+        <div><span>PWM</span><b id="aP">—</b></div>
+        <div><span>Mode</span><b id="aM">—</b></div>
+        <div><span>Counts</span><b id="aC">—</b></div>
+      </div>
+      <div class="flt hide" id="aF"></div>
+
+      <h3>Move</h3>
+      <div class="row">
+        <input type="number" id="jogStep" value="30" step="any" aria-label="Step degrees">
+        <button data-jog="-1">− step</button><button data-jog="1">+ step</button>
+        <button data-ax="halt">Halt</button><button data-ax="zero">Set 0° here</button>
+      </div>
+      <div class="row">
+        <input type="number" id="gotoDeg" placeholder="Go to angle (°)" step="any">
+        <button data-ax="goto">Go</button>
+      </div>
+      <div class="row" id="presetRow"></div>
+      <div class="row" id="spinRow">
+        <input type="number" id="spinV" value="40" step="any" aria-label="Spin speed deg/s">
+        <button data-ax="spin">Spin (°/s)</button><button data-ax="spin0">Stop spin</button>
+      </div>
+
+      <h3>Step response test</h3>
+      <div class="row">
+        <input type="number" id="stepDeg" value="90" step="any" aria-label="Step test distance">
+        <button class="pri" data-ax="step">Run step test</button>
+      </div>
+      <div class="chart" id="chartBox">
+        <svg id="posSvg" viewBox="0 0 640 220" role="img" aria-label="Step response: setpoint and measured angle over time"></svg>
+        <svg id="pwmSvg" viewBox="0 0 640 110" role="img" aria-label="Motor PWM over time"></svg>
+        <div class="tip hide" id="tip"></div>
+      </div>
+      <div class="legend"><span><i style="--c:var(--s1)"></i>Measured angle</span><span><i class="d" style="--c:var(--s2)"></i>Profiled setpoint</span><span><i style="--c:var(--mut)"></i>PWM</span><span><i style="--c:var(--ok);border-top-width:8px;opacity:.35"></i>Target ± tolerance</span></div>
+      <div class="metrics read" id="metrics"></div>
+      <p class="note" id="chartNote">Run a step test to see how the loop responds. Overshoot: lower Kp or raise Kd. Slow to arrive or stalls short: raise Kp, Ki or friction PWM.</p>
+
+      <h3>Tuning</h3>
+      <div class="fields" id="axFields"></div>
+
+      <details>
+        <summary>Wiring check (open-loop)</summary>
+        <p class="note">Drives the motor with no feedback for 1 s. Positive PWM must make the counts go up. If the motor spins the wrong way, tick "Reverse motor". If the counts run backwards, tick "Reverse encoder".</p>
+        <div class="row">
+          <input type="number" id="rawPwm" value="120" min="0" max="255" aria-label="Open-loop PWM">
+          <button data-raw="-1">Run −PWM 1 s</button><button data-raw="1">Run +PWM 1 s</button>
+        </div>
+      </details>
+      <details>
+        <summary>Calibrate counts per revolution</summary>
+        <p class="note">1. Mark the output shaft. 2. Tap Start (the motor goes limp). 3. Turn the shaft exactly one full turn by hand. 4. Tap Done, then Save to flash.</p>
+        <div class="row"><button data-ax="calstart">Start</button><button class="pri" data-ax="caldone">Done</button></div>
+      </details>
+    </div>
+
+    <div id="servoPane" class="hide">
+      <div class="read"><div><span>Commanded angle</span><b id="svA">—</b></div></div>
+      <h3>Move</h3>
+      <div class="row">
+        <input type="range" id="svSlider" min="0" max="180" value="0" style="flex:1" aria-label="Servo angle">
+        <b id="svVal" style="width:48px;text-align:right">0°</b>
+      </div>
+      <div class="row"><button data-svgo="load">Go to load</button><button data-svgo="drop">Go to drop</button><button data-cmd="feed">Feed step (toggle)</button></div>
+      <h3>Settings</h3>
+      <div class="fields" id="svFields"></div>
+      <p class="note">Pulse range sets the 0° and 180° ends. Narrow it if the servo buzzes at an end stop.</p>
+    </div>
+  </div>
+</section>
+</div>
+</div>
+
+<div class="dock">
+  <button class="pri" data-cmd="run">Run</button>
+  <button data-cmd="stop">Stop</button>
+  <button class="stop" data-cmd="estop">E-STOP</button>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// ---------------- SorterLink: one protocol over BLE (Nordic UART) or Wi-Fi (HTTP) ----------------
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e', NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e', NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+class SorterLink {
+  constructor() { this.kind = null; this.h = {}; this.pend = []; this.buf = ''; this.wq = Promise.resolve(); this.cv = -1; this.tid = -1; this.gen = 0; }
+  on(ev, f) { (this.h[ev] ||= []).push(f); return this; }
+  emit(ev, d) { (this.h[ev] || []).forEach(f => { try { f(d); } catch (e) { console.error(e); } }); }
+  get connected() { return !!this.kind; }
+  close(why) {
+    const was = this.kind; this.kind = null; this.gen++;
+    this.pend.splice(0).forEach(p => { clearTimeout(p.t); p.rej(new Error('disconnected')); });
+    if (this.dev) { try { this.dev.gatt.disconnect(); } catch {} this.dev = null; }
+    if (was) this.emit('close', why || 'Disconnected');
+  }
+  async connectBLE() {
+    if (!navigator.bluetooth) throw new Error('This browser has no Web Bluetooth. Use Chrome or Edge (Android, Mac, Windows, ChromeOS) or the Bluefy app on iPhone, or connect over Wi-Fi.');
+    this.close();
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
+    dev.addEventListener('gattserverdisconnected', () => { if (this.dev === dev) { this.dev = null; this.close('Bluetooth link lost'); } });
+    const gatt = await dev.gatt.connect(), svc = await gatt.getPrimaryService(NUS);
+    this.rx = await svc.getCharacteristic(NUS_RX); this.tx = await svc.getCharacteristic(NUS_TX);
+    this.tx.addEventListener('characteristicvaluechanged', e => this._chunk(new TextDecoder().decode(e.target.value)));
+    await this.tx.startNotifications();
+    this.dev = dev; this.buf = ''; this.kind = 'ble'; this.cv = -1; this.tid = -1; this.gen++;
+    this.emit('open', 'Bluetooth: ' + (dev.name || 'BoltSorter'));
+  }
+  async connectHTTP(base) {
+    this.close();
+    base = String(base || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(base)) base = 'http://' + base;
+    const s = await this._get(base + '/api/status');
+    this.base = base; this.kind = 'wifi'; this.cv = -1; this.tid = -1; this.fails = 0; const g = ++this.gen;
+    this.emit('open', 'Wi-Fi: ' + base.replace(/^https?:\/\//, ''));
+    this._status(s); this._poll(g);
+  }
+  _get(url) {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 3000), o = { cache: 'no-store', signal: ac.signal };
+    if (location.protocol === 'https:') o.targetAddressSpace = 'local';   // Chrome local-network access from an https page
+    return fetch(url, o).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).finally(() => clearTimeout(t));
+  }
+  async _poll(g) {
+    while (this.kind === 'wifi' && g === this.gen) {
+      await new Promise(r => setTimeout(r, 300));
+      if (this.kind !== 'wifi' || g !== this.gen) return;
+      try { this._status(await this._get(this.base + '/api/status')); this.fails = 0; }
+      catch { if (++this.fails >= 5) { this.close('Wi-Fi link lost'); return; } }
+    }
+  }
+  _chunk(s) {
+    this.buf += s; let i;
+    while ((i = this.buf.indexOf('\n')) >= 0) { const line = this.buf.slice(0, i); this.buf = this.buf.slice(i + 1); if (line) this._msg(line); }
+    if (this.buf.length > 20000) this.buf = '';
+  }
+  _msg(line) {
+    let m; try { m = JSON.parse(line); } catch { return; }
+    if (m.t === 's') return this._status(m);
+    if (m.t === 'c') this.emit('config', m);
+    if (m.t === 'tr') this.emit('trace', m);
+    const p = this.pend.shift(); if (p) { clearTimeout(p.t); p.res(m); }
+  }
+  _status(s) {
+    this.last = s; this.emit('status', s);
+    if (s.cv !== this.cv) { this.cv = s.cv; this.refreshConfig(); }
+    if (s.tr === 2 && s.tid !== this.tid) { this.tid = s.tid; this.fetchTrace(); }
+  }
+  refreshConfig() { return this.send('get').catch(() => {}); }
+  fetchTrace() {
+    if (this.kind === 'wifi') return this._get(this.base + '/api/trace').then(m => this.emit('trace', m)).catch(() => {});
+    return this.send('trace').catch(() => {});
+  }
+  send(cmd) {
+    if (!this.kind) return Promise.reject(new Error('Not connected'));
+    if (this.kind === 'wifi') return this._get(this.base + '/api/cmd?c=' + encodeURIComponent(cmd)).then(m => { if (m.t === 'c') this.emit('config', m); this.emit('reply', m); return m; });
+    return new Promise((res, rej) => {
+      const p = { res: m => { this.emit('reply', m); res(m); }, rej };
+      p.t = setTimeout(() => { const i = this.pend.indexOf(p); if (i >= 0) this.pend.splice(i, 1); rej(new Error('No reply')); }, 5000);
+      this.pend.push(p);
+      const data = new TextEncoder().encode(cmd.replace(/\n/g, ' ') + '\n'), rx = this.rx;
+      this.wq = this.wq.then(async () => {
+        for (let i = 0; i < data.length; i += 20) { const c = data.slice(i, i + 20); rx.writeValueWithResponse ? await rx.writeValueWithResponse(c) : await rx.writeValue(c); }
+      }).catch(e => { const i = this.pend.indexOf(p); if (i >= 0) { this.pend.splice(i, 1); clearTimeout(p.t); rej(e); } });
+    });
+  }
+}
+
+// ---------------- page ----------------
+const $ = id => document.getElementById(id);
+const link = new SorterLink();
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+let S = null, CFG = {}, tab = store.get('bc-tab') || 0, dirty = false, lastSeq = -1;
+const AXN = ['t', 'f', 'h'], AXNAME = ['Tube', 'Flap', 'Hatch'];
+
+function toast(msg, err) { const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : ''); clearTimeout(toast.t); toast.t = setTimeout(() => t.className = 'toast', 2600); }
+async function cmd(c) {
+  try { const r = await link.send(c); if (r && r.t === 'r') toast(r.msg, !r.ok); if (/^(set|defaults|load|cal \w+ done)/.test(c)) setDirty(true); if (c === 'save' && r.ok) setDirty(false); if (c === 'load') setDirty(false); return r; }
+  catch (e) { toast(e.message, true); }
+}
+function setDirty(d) { dirty = d; $('dirty').classList.toggle('hide', !d); }
+
+// ----- settings schema (labels live here; firmware has keys + limits) -----
+const AXF = [['kp', 'Kp (PWM/°)'], ['ki', 'Ki (PWM/°·s)'], ['kd', 'Kd (PWM per °/s)'], ['ff', 'Friction PWM'], ['vmax', 'Max speed (°/s)'], ['acc', 'Accel (°/s²)'], ['tol', 'Arrive tolerance (°)'], ['maxpwm', 'Max PWM (0–255)'], ['cpr', 'Counts / output rev'], ['inv', 'Reverse motor', 'b'], ['einv', 'Reverse encoder', 'b']];
+const AXEXTRA = [
+  [['ispd', 'Inspection speed (°/s)'], ['ideg', 'Inspection turn (°)']],
+  [['fopen', 'Open angle (°)'], ['fclose', 'Closed angle (°)'], ['fdwell', 'Open dwell (ms)']],
+  [['hgood', 'GOOD bin angle (°)'], ['hbad', 'BAD bin angle (°)'], ['hlim', 'Use limit switches', 'b']]];
+const SVF = [['svload', 'Load angle (°)'], ['svdrop', 'Drop angle (°)'], ['svspd', 'Speed (°/s)'], ['svhold', 'Hold at end (ms)'], ['svret', 'Return to load after each drop', 'b'], ['svmin', 'Pulse at 0° (µs)'], ['svmax', 'Pulse at 180° (µs)']];
+const SEQF = [['settle', 'Settle before inspect (ms)'], ['vto', 'Verdict timeout (ms)'], ['vfb', 'If no verdict', 's', [[0, 'Send to BAD bin'], [1, 'Send to GOOD bin'], [2, 'Wait for manual'], [3, 'Fault']]], ['bsens', 'Wait for bolt sensor', 'b'], ['gap', 'Feed gap without sensor (ms)'], ['mto', 'Move timeout (ms)']];
+
+function fieldHTML([k, label, type, opts]) {
+  if (type === 'b') return `<label class="ck"><input type="checkbox" data-k="${k}"> ${label}</label>`;
+  if (type === 's') return `<div><label for="f_${k}">${label}</label><select id="f_${k}" data-k="${k}">${opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>`;
+  return `<div><label for="f_${k}">${label}</label><input type="number" step="any" id="f_${k}" data-k="${k}"></div>`;
+}
+function renderAxisFields() {
+  const p = AXN[tab] + '_';
+  $('axFields').innerHTML = [...AXEXTRA[tab], ...AXF.map(([k, l, t]) => [p + k, l, t])].map(fieldHTML).join('');
+  fillFields($('axFields'));
+}
+$('svFields').innerHTML = SVF.map(fieldHTML).join('');
+$('seqFields').innerHTML = SEQF.map(fieldHTML).join('');
+function fillFields(root) {
+  root.querySelectorAll('[data-k]').forEach(el => {
+    const v = CFG[el.dataset.k]; if (v === undefined || el === document.activeElement) return;
+    if (el.type === 'checkbox') el.checked = v > 0.5; else if (el.tagName === 'SELECT') el.value = String(Math.round(v)); else el.value = +(+v).toPrecision(6);
+  });
+}
+document.addEventListener('change', e => {
+  const el = e.target, k = el.dataset && el.dataset.k; if (!k) return;
+  const v = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
+  if (v === '' || isNaN(+v)) return;
+  cmd(`set ${k}=${v}`);
+});
+link.on('config', m => { CFG = m.v || {}; document.querySelectorAll('.fields').forEach(fillFields); if (S) updateServoSlider(true); });
+
+// ----- tabs -----
+function setTab(i) {
+  tab = i; store.set('bc-tab', i);
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', +b.dataset.tab === i));
+  $('axisPane').classList.toggle('hide', i === 3); $('servoPane').classList.toggle('hide', i !== 3);
+  if (i < 3) {
+    renderAxisFields();
+    $('spinRow').classList.toggle('hide', i !== 0);
+    $('presetRow').innerHTML = [
+      '<button data-cmd="inspect">Inspection turn</button>',
+      '<button data-cmd="flap open">Open</button><button data-cmd="flap close">Close</button>',
+      '<button data-cmd="hatch good">GOOD bin</button><button data-cmd="hatch bad">BAD bin</button>'][i];
+    drawTrace();
+  }
+  if (S) render(S);
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setTab(+b.dataset.tab));
+
+// ----- buttons -----
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const a = AXN[tab], d = b.dataset;
+  if (d.cmd) return cmd(d.cmd);
+  if (d.jog) return cmd(`jog ${a} ${(+$('jogStep').value || 0) * +d.jog}`);
+  if (d.raw) return cmd(`pwm ${a} ${Math.abs(+$('rawPwm').value || 0) * +d.raw} 1000`);
+  if (d.svgo) return cmd(`servo ${CFG[d.svgo === 'load' ? 'svload' : 'svdrop'] ?? 0}`);
+  if (d.ax) {
+    const m = { halt: `halt ${a}`, zero: `zero ${a}`, goto: `goto ${a} ${$('gotoDeg').value}`, spin: `spin ${a} ${$('spinV').value}`, spin0: `spin ${a} 0`, step: `step ${a} ${$('stepDeg').value}`, calstart: `cal ${a} start`, caldone: `cal ${a} done` }[d.ax];
+    if (d.ax === 'goto' && $('gotoDeg').value === '') return;
+    return cmd(m);
+  }
+});
+$('svSlider').oninput = () => { $('svVal').textContent = $('svSlider').value + '°'; };
+$('svSlider').onchange = () => cmd(`servo ${$('svSlider').value}`);
+function updateServoSlider(force) { if (document.activeElement !== $('svSlider') || force) { $('svSlider').value = Math.round(S.sv); $('svVal').textContent = Math.round(S.sv) + '°'; } }
+
+// ----- status render -----
+const f1 = v => (v == null ? '—' : (+v).toFixed(1));
+function setLed(id, on) { $(id).classList.toggle('on', !!on); }
+function render(s) {
+  S = s;
+  const st = $('st'); st.textContent = s.st.replace('_', ' '); st.className = 'state ' + s.st;
+  const runTxt = ['stopped', 'running', 'finishing this bolt'][s.run] || '';
+  $('stSub').textContent = `Bolt #${s.cyc} · ${runTxt} · ${(s.el / 1000).toFixed(1)} s in state`;
+  $('prog').style.width = (s.prog * 100).toFixed(1) + '%';
+  $('flt').classList.toggle('hide', !s.flt); $('flt').textContent = s.flt;
+  $('verd').classList.toggle('show', (s.st === 'INSPECT' || s.st === 'AWAIT_VERDICT') && !s.v);
+  $('trigBtn').disabled = s.st !== 'WAIT_BOLT'; $('resetBtn').disabled = s.st !== 'FAULT';
+  [['nG', 0], ['nB', 1], ['nE', 2], ['nT', 3]].forEach(([id, i]) => $(id).textContent = s.n[i]);
+  $('lastV').textContent = s.lv ? `Last bolt: ${{ g: 'GOOD', b: 'BAD', e: 'EMPTY' }[s.lv]}${s.lr ? ' — ' + s.lr : ''}` : 'No bolts sorted yet';
+  setLed('inBolt', s.in[0]); setLed('inLG', s.in[1]); setLed('inLB', s.in[2]); setLed('inBtn', s.in[3]);
+  if (tab < 3) {
+    const a = s.ax[tab];
+    $('aA').textContent = f1(a.a) + '°'; $('aT').textContent = f1(a.t) + '°'; $('aE').textContent = f1(a.t - a.a) + '°';
+    $('aP').textContent = a.p; $('aM').textContent = a.m; $('aC').textContent = a.c;
+    $('aF').classList.toggle('hide', !a.f); $('aF').textContent = a.f;
+  } else { $('svA').textContent = f1(s.sv) + '°'; updateServoSlider(); }
+  if (s.ms !== lastSeq) { lastSeq = s.ms; }
+}
+link.on('status', render);
+link.on('open', name => { $('linkChip').textContent = name; $('linkChip').classList.add('on'); $('connHint').textContent = ''; });
+link.on('close', why => { $('linkChip').textContent = why; $('linkChip').classList.remove('on'); });
+
+// ----- step response chart -----
+let TR = store.get('bc-trace');
+link.on('trace', m => { if (!m.n) return; TR = m; store.set('bc-trace', m); drawTrace(); });
+const NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
+function niceTicks(lo, hi, n) { const span = hi - lo || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0)), step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0); const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6)); return out; }
+function drawTrace() {
+  const pos = $('posSvg'), pw = $('pwmSvg'); pos.innerHTML = ''; pw.innerHTML = '';
+  const tr = TR && TR.n && TR.ax === ['tube', 'flap', 'hatch'][tab] ? TR : null;
+  $('metrics').innerHTML = '';
+  if (!tr) { svgEl('text', { x: 320, y: 110, 'text-anchor': 'middle', fill: 'var(--mut)', 'font-size': 14 }, pos).textContent = `No step test for the ${AXNAME[tab].toLowerCase()} yet`; return; }
+  const n = tr.n, dt = tr.dt / 1000, T = i => i * dt, sp = tr.sp.map(v => v / 10), a = tr.a.map(v => v / 10), p = tr.p, tgt = tr.tgt, tol = tr.tol;
+  const L = 46, R = 630, W = R - L;
+  const lo = Math.min(0, tgt, ...a, ...sp), hi = Math.max(0, tgt, ...a, ...sp), pad = (hi - lo) * 0.08 || 1;
+  const yT = 12, yB = 196, Y = v => yB - (v - (lo - pad)) / (hi - lo + 2 * pad) * (yB - yT), X = t => L + t / T(n - 1) * W;
+  const xt = niceTicks(0, T(n - 1), 6);
+  const axes = (svg, yt, Yf, yb, fmt) => {
+    yt.forEach(v => { svgEl('line', { x1: L, x2: R, y1: Yf(v), y2: Yf(v), stroke: 'var(--grid)', 'stroke-width': 1 }, svg); svgEl('text', { x: L - 6, y: Yf(v) + 4, 'text-anchor': 'end', fill: 'var(--mut)', 'font-size': 11 }, svg).textContent = fmt(v); });
+    xt.forEach(t => svgEl('text', { x: X(t), y: yb + 16, 'text-anchor': 'middle', fill: 'var(--mut)', 'font-size': 11 }, svg).textContent = t.toFixed(1) + ' s');
+  };
+  axes(pos, niceTicks(lo - pad, hi + pad, 5), Y, yB, v => v + '°');
+  svgEl('rect', { x: L, width: W, y: Y(tgt + tol), height: Math.max(2, Y(tgt - tol) - Y(tgt + tol)), fill: 'var(--band)' }, pos);
+  const path = (vals, Yf) => vals.map((v, i) => (i ? 'L' : 'M') + X(T(i)).toFixed(1) + ' ' + Yf(v).toFixed(1)).join('');
+  svgEl('path', { d: path(sp, Y), fill: 'none', stroke: 'var(--s2)', 'stroke-width': 2, 'stroke-dasharray': '6 4' }, pos);
+  svgEl('path', { d: path(a, Y), fill: 'none', stroke: 'var(--s1)', 'stroke-width': 2 }, pos);
+  const pmax = Math.max(60, ...p.map(Math.abs)), yT2 = 8, yB2 = 86, Y2 = v => yB2 - (v + pmax) / (2 * pmax) * (yB2 - yT2);
+  axes(pw, niceTicks(-pmax, pmax, 2), Y2, yB2, v => String(v));
+  svgEl('path', { d: path(p, Y2), fill: 'none', stroke: 'var(--mut)', 'stroke-width': 1.5 }, pw);
+  // metrics
+  const err = a.map(v => tgt - v), dir = Math.sign(tgt) || 1, peak = dir > 0 ? Math.max(...a) : Math.min(...a);
+  const over = Math.max(0, (peak - tgt) * dir), overPct = Math.abs(tgt) > 0 ? over / Math.abs(tgt) * 100 : 0;
+  const i10 = a.findIndex(v => v * dir >= 0.1 * tgt * dir), i90 = a.findIndex(v => v * dir >= 0.9 * tgt * dir);
+  let settle = -1; for (let i = n - 1; i >= 0; i--) if (Math.abs(err[i]) > tol) { settle = i + 1 < n ? i + 1 : -1; break; } if (settle === -1 && Math.abs(err[0]) <= tol) settle = 0;
+  const M = [['Overshoot', `${over.toFixed(2)}° (${overPct.toFixed(1)}%)`], ['Rise 10–90%', i10 >= 0 && i90 >= 0 ? `${((i90 - i10) * dt).toFixed(2)} s` : '—'], ['Settled (±tol)', settle >= 0 ? `${(settle * dt).toFixed(2)} s` : 'not in 2.5 s'], ['Final error', `${err[n - 1].toFixed(2)}°`], ['Peak PWM', String(Math.max(...p.map(Math.abs)))]];
+  $('metrics').innerHTML = M.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+  // hover crosshair
+  const cross = [pos, pw].map(svg => svgEl('line', { y1: 0, y2: svg === pos ? yB : yB2, stroke: 'var(--mut)', 'stroke-width': 1, visibility: 'hidden' }, svg));
+  const dot = svgEl('circle', { r: 4, fill: 'var(--s1)', stroke: 'var(--bg)', 'stroke-width': 2, visibility: 'hidden' }, pos);
+  const tip = $('tip'), box = $('chartBox');
+  const move = ev => {
+    const r = pos.getBoundingClientRect(), sx = (ev.clientX - r.left) / r.width * 640;
+    const i = Math.max(0, Math.min(n - 1, Math.round((sx - L) / W * (n - 1))));
+    cross.forEach(c => { c.setAttribute('x1', X(T(i))); c.setAttribute('x2', X(T(i))); c.setAttribute('visibility', 'visible'); });
+    dot.setAttribute('cx', X(T(i))); dot.setAttribute('cy', Y(a[i])); dot.setAttribute('visibility', 'visible');
+    tip.innerHTML = `<b>${T(i).toFixed(2)} s</b><br>Angle ${a[i].toFixed(1)}° · Setpoint ${sp[i].toFixed(1)}°<br>PWM ${p[i]}`;
+    tip.classList.remove('hide');
+    const bx = box.getBoundingClientRect(), px = ev.clientX - bx.left;
+    tip.style.left = Math.min(px + 12, bx.width - tip.offsetWidth - 4) + 'px'; tip.style.top = '8px';
+  };
+  const leave = () => { cross.forEach(c => c.setAttribute('visibility', 'hidden')); dot.setAttribute('visibility', 'hidden'); tip.classList.add('hide'); };
+  [pos, pw].forEach(svg => { svg.onpointermove = move; svg.onpointerleave = leave; });
+}
+
+// ----- connecting -----
+$('btBtn').onclick = async () => { try { $('btBtn').disabled = true; await link.connectBLE(); } catch (e) { if (e.name !== 'NotFoundError') toast(e.message, true); } finally { $('btBtn').disabled = false; } };
+$('wifiBtn').onclick = async () => {
+  const a = $('addr').value; store.set('bc-addr', a);
+  try { $('wifiBtn').disabled = true; await link.connectHTTP(a); }
+  catch (e) {
+    toast('Could not reach ' + a, true);
+    $('connHint').textContent = location.protocol === 'https:' ? 'This page is on https, so most browsers block plain-http Wi-Fi requests to the ESP32. Use Connect Bluetooth here, or open http://' + a + ' directly.' : 'Join the "BoltSorter" Wi-Fi (password bolts1420), or the shared network set in the sketch, then try again.';
+  } finally { $('wifiBtn').disabled = false; }
+};
+$('addr').value = store.get('bc-addr') || '192.168.4.1';
+setTab(tab);
+// served by the ESP32 itself -> connect over Wi-Fi automatically
+if (location.protocol === 'http:' && !/^(localhost|127\.)/.test(location.hostname) && location.hostname) {
+  $('addr').value = location.host;
+  link.connectHTTP(location.origin).catch(() => {});
+}
+</script>
+</body>
+</html>

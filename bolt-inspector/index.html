@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bolt Thread Inspector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: shop-floor clinical — a QC gauge, not a gadget
+   IDEA: an inspection tag clipped to a part: the photo is the part, the tag is the verdict
+   PICTURE: the bolt photo with measured edges, crest dots and red defect bands drawn on it
+   COLOUR and TYPE: white ground, graphite ink, layout-fluid blue accent, pass green / fail red; Barlow Semi Condensed + IBM Plex Sans
+   LAYOUT: viewer first and large, controls under thumb, tag + thread map + findings below */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#111418);--ink:light-dark(#16191d,#e8ebee);--mut:light-dark(#5b636c,#9aa3ad);--line:light-dark(#dde1e5,#2a3037);--panel:light-dark(#f2f4f6,#1a1f25);--blue:light-dark(#1f4fd1,#6f93ff);--ok:light-dark(#137a3a,#3fca73);--warn:light-dark(#a35f00,#f0a53a);--bad:light-dark(#c4161c,#ff5a5f)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "IBM Plex Sans",system-ui,sans-serif;overflow-x:clip}
+h1,h2,.tag b{font-family:"Barlow Semi Condensed",system-ui,sans-serif;font-weight:700;line-height:1.05;margin:0}
+h1{font-size:clamp(28px,5vw,40px);text-wrap:balance}h2{font-size:22px;margin:0 0 10px}
+.wrap{max-width:1240px;margin:0 auto;padding:clamp(16px,3vw,32px) max(4vw,14px)}
+header p{margin:6px 0 0;color:var(--mut);max-width:62ch}
+.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;margin-top:18px}
+@media(max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.view{position:relative;background:#0d0f12;border-radius:10px;overflow:hidden;aspect-ratio:4/3}
+.view canvas,.view video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.view video{opacity:0}
+.hint{position:absolute;left:12px;bottom:10px;right:12px;color:#cfd6dd;font-size:13px;text-shadow:0 1px 2px #000}
+.live{position:absolute;top:10px;left:12px;background:var(--bad);color:#fff;font-size:13px;font-weight:600;padding:2px 10px;border-radius:99px;display:none}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+button,.btn,select{font:500 16px/1 "IBM Plex Sans",sans-serif;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.btn.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+button:focus-visible,.btn:focus-within,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+.demo{font-size:14px;color:var(--mut)}.demo button{min-height:44px;font-size:14px;padding:0 12px}
+label.sz{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:14px}
+.msg{margin-top:10px;font-size:14px;color:var(--warn);min-height:1em}
+.tag{border:2px solid var(--c,var(--line));border-radius:12px;padding:16px 18px;position:relative;background:var(--panel)}
+.tag::before{content:"";position:absolute;top:16px;right:18px;width:14px;height:14px;border-radius:50%;border:2px solid var(--c,var(--line));background:var(--bg)}
+.tag b{display:block;font-size:52px;color:var(--c,var(--mut))}
+.tag .sub{color:var(--mut);font-size:15px}
+.map{margin:14px 0 4px;height:26px;border-radius:5px;background:color-mix(in srgb,var(--ok) 22%,var(--panel));position:relative;overflow:hidden}
+.map i{position:absolute;top:0;bottom:0;background:var(--bad)}.map i.s2{background:var(--warn)}
+.maplab{display:flex;justify-content:space-between;font-size:13px;color:var(--mut)}
+ul.f{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+ul.f li{padding:10px 12px;border-radius:8px;background:var(--panel);border-left:4px solid var(--warn);font-size:15px}
+ul.f li.s3{border-left-color:var(--bad)}ul.f li.s1{border-left-color:var(--line)}ul.f li.ok{border-left-color:var(--ok)}
+ul.f strong{display:block}
+table{width:100%;border-collapse:collapse;margin-top:16px;font-size:15px}
+td{padding:7px 0;border-bottom:1px solid var(--line)}td:last-child{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ref{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center;font-size:14px;color:var(--mut)}
+.band2{border-top:1px solid var(--line);margin-top:28px;padding-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:22px}
+.band2 ol,.band2 ul{margin:0;padding-left:20px}.band2 li{margin-bottom:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mut);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--d);vertical-align:-1px}
+@media(prefers-reduced-motion:no-preference){.tag{transition:border-color .3s}}
+/* machine link */
+.mach{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--panel)}
+.conn{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.conn input{font:inherit;min-height:44px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:150px}
+.chip{font-size:13px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--bg);border:1px solid var(--line);color:var(--mut)}
+.chip.on{color:var(--ok);border-color:var(--ok)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:14px}
+.mgrid .lbl{display:block;font-size:13px;color:var(--mut)}
+.mgrid b{display:block;font-family:"Barlow Semi Condensed",system-ui,sans-serif;font-size:30px;line-height:1.1}
+.mgrid .sub{font-size:14px;color:var(--mut)}
+#mState.FAULT{color:var(--bad)}#mState.INSPECT,#mState.AWAIT_VERDICT{color:var(--blue)}
+.tal{display:flex;gap:16px}.tal div{text-align:center}.tal b{font-variant-numeric:tabular-nums}
+.tal .g{color:var(--ok)}.tal .b{color:var(--bad)}
+.sweep{position:relative;height:30px;border-radius:5px;background:var(--bg);border:1px solid var(--line);margin-top:14px;overflow:hidden}
+.sweep i{position:absolute;top:3px;bottom:3px;width:5px;margin-left:-2.5px;border-radius:2px;background:var(--ok)}
+.sweep i.CHECK{background:var(--warn)}.sweep i.FAIL{background:var(--bad)}.sweep i.none{background:var(--line)}.sweep i.unread{background:none;border:2px solid var(--mut)}
+.sweep .cur{position:absolute;top:0;bottom:0;width:2px;background:var(--blue);transition:left .3s}
+label.ck{display:flex;align-items:center;gap:8px;font-size:15px;min-height:44px}
+label.ck input{width:20px;height:20px}
+.call{font-weight:600}
+.hist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.hist li{display:flex;gap:10px;background:var(--panel);border-radius:10px;padding:8px;border-left:4px solid var(--line)}
+.hist li.g{border-left-color:var(--ok)}.hist li.b{border-left-color:var(--bad)}.hist li.e{border-left-color:var(--mut)}
+.hist img{width:84px;height:63px;object-fit:cover;border-radius:6px;background:#0d0f12;flex:none}
+.hist b{font-family:"Barlow Semi Condensed",system-ui,sans-serif;font-size:20px}
+.hist .sub{font-size:13px;color:var(--mut);line-height:1.35}
+.histHead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:28px 0 12px;border-top:1px solid var(--line);padding-top:22px}
+.histHead h2{margin:0}
+.agg{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:8px}
+.agg label{font-size:13px;color:var(--mut)}
+.agg input{font:inherit;width:100%;min-height:40px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+details summary{cursor:pointer;color:var(--mut);font-weight:600;min-height:32px}
+.view.roi canvas{cursor:crosshair;touch-action:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Bolt thread inspector</h1>
+  <p>Watches each 1/4-20 bolt as the tube turns it, traces both thread edges in every frame, and tells the sorter GOOD, BAD or EMPTY. It also works on a single photo when no machine is connected.</p>
+</header>
+
+<section class="mach" aria-label="Machine">
+  <div class="conn">
+    <span class="chip" id="linkChip">Machine not connected</span>
+    <button id="btBtn">Connect Bluetooth</button>
+    <input type="text" id="addr" value="192.168.4.1" aria-label="ESP32 address">
+    <button id="wifiBtn">Connect Wi-Fi</button>
+  </div>
+  <div class="mgrid">
+    <div><span class="lbl">Machine</span><b id="mState">—</b><span class="sub" id="mSub">Connect to the sorter to inspect automatically</span></div>
+    <div><span class="lbl">Bolt in the tube</span><b id="curNo">—</b><span class="sub call" id="curCall"></span></div>
+    <div><span class="lbl">Sorted so far</span>
+      <div class="tal"><div><b class="g" id="nG">0</b><span class="sub">Good</span></div><div><b class="b" id="nB">0</b><span class="sub">Bad</span></div><div><b id="nE">0</b><span class="sub">Empty</span></div></div>
+    </div>
+  </div>
+  <div class="sweep" id="sweep" aria-label="Frames captured around the bolt"><span class="cur" id="sweepCur" style="left:0"></span></div>
+  <div class="maplab"><span>0°</span><span>Tube rotation · one mark per frame</span><span>360°</span></div>
+  <div class="ctl">
+    <label class="ck"><input type="checkbox" id="autoSend" checked> Send verdicts automatically</label>
+    <button data-cmd="run" class="btn pri">Run</button><button data-cmd="single">One bolt</button><button data-cmd="stop">Stop</button>
+    <button id="sendG" disabled>Send GOOD</button><button id="sendB" disabled>Send BAD</button>
+  </div>
+  <div class="msg" id="mMsg"></div>
+</section>
+
+<div class="grid">
+  <section>
+    <div class="view" id="view">
+      <video id="vid" playsinline muted></video>
+      <canvas id="cv"></canvas>
+      <div class="live" id="liveTag">Live</div>
+      <div class="hint" id="hint"></div>
+    </div>
+    <div class="legend"><span style="--d:#3fca73">Good crest</span><span style="--d:#ff5a5f">Defective crest</span><span style="--d:#6f93ff">Measured edge</span></div>
+    <div class="ctl">
+      <button id="liveBtn" class="btn pri">Live camera</button>
+      <label class="sz">Camera <select id="camSel"><option value="">Back camera</option></select></label>
+      <button id="roiBtn">Set inspection area</button><button id="roiClr">Full frame</button>
+    </div>
+    <div class="ctl">
+      <label class="btn">Take photo<input type="file" id="snap" accept="image/*" capture="environment"></label>
+      <label class="btn">Upload<input type="file" id="up" accept="image/*"></label>
+      <label class="sz">Size
+        <select id="size"><option value="">Unknown</option></select>
+      </label>
+      <label class="sz">Smoothing
+        <select id="smooth"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select>
+      </label>
+      <label class="sz">Shadows
+        <select id="shadow"><option value="auto">Auto</option><option value="strong">Always remove</option><option value="off">Off</option></select>
+      </label>
+    </div>
+    <div class="ctl demo">Try a sample:
+      <button data-demo="good">Good bolt</button><button data-demo="strip">Stripped</button><button data-demo="cross">Cross-threaded</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </section>
+
+  <section>
+    <div class="tag" id="tag">
+      <b id="verdict">—</b>
+      <div class="sub" id="vsub">No bolt analysed yet</div>
+      <div class="map" id="map"></div>
+      <div class="maplab"><span>Head end</span><span>Thread map · this frame</span><span>Tip</span></div>
+      <ul class="f" id="flags"></ul>
+      <table id="met"></table>
+      <div class="ref"><button id="saveRef">Save as good reference</button><button id="clrRef">Clear</button><span id="refInfo">No reference saved</span></div>
+    </div>
+    <details style="margin-top:14px">
+      <summary>Bolt decision rules</summary>
+      <div class="agg">
+        <div><label for="agMin">Frames before deciding</label><input type="number" id="agMin" min="1" step="1"></div>
+        <div><label for="agFail">Consecutive failing frames for BAD</label><input type="number" id="agFail" min="1" step="1"></div>
+        <div><label for="agFrac">…or this share of readable frames failing</label><input type="number" id="agFrac" min="0" max="1" step="0.05"></div>
+      </div>
+      <p class="sub" style="margin:8px 0 0">A defect stays visible for several neighbouring tube angles, so a run of failing frames means BAD. A lone failing frame is treated as noise. For the share rule, a CHECK frame counts as half a failure. If most frames show no bolt, the call is EMPTY. If a bolt is seen but too few frames can be read, the call is BAD, so an unreadable bolt never reaches the good bin.</p>
+    </details>
+  </section>
+</div>
+
+<div class="histHead"><h2>Sorted bolts</h2><button id="histClr">Clear history</button></div>
+<ol class="hist" id="hist"></ol>
+
+<div class="band2">
+  <div>
+    <h2>Setting up the camera</h2>
+    <ol>
+      <li>Mount the phone or webcam side-on to the tube, with the threads in sharp focus and filling most of the frame.</li>
+      <li>Put a plain, contrasting backdrop behind the bolt. A backlight gives the crispest silhouette.</li>
+      <li>Tap Set inspection area, then drag a box around the bolt's position in the tube. Leave out the tube walls and the flap, so the bolt is the only large object.</li>
+      <li>Run one bolt you know is good, check that it reads PASS in most frames, and save it as the good reference.</li>
+      <li>Live camera needs https or localhost. On a phone, open the hosted page and use Connect Bluetooth. On a laptop, open this file directly and use either connection.</li>
+    </ol>
+  </div>
+  <div>
+    <h2>What it checks</h2>
+    <ul>
+      <li><b>Stripped / flattened:</b> tooth depth below half the bolt's median.</li>
+      <li><b>Cross-threaded:</b> crests knocked off the helix grid, or lopsided teeth.</li>
+      <li><b>Missing or truncated crests</b>, uneven pitch, bent or tapered shank.</li>
+      <li><b>Not helical:</b> top and bottom crests should sit half a pitch apart.</li>
+      <li><b>Wrong pitch</b> against 1/4-20 (1.27 mm) or a saved good bolt.</li>
+    </ul>
+  </div>
+  <div>
+    <h2>Limits</h2>
+    <p style="margin:0">It reads the outline only. One frame sees two flanks, so the tube's rotation and the many frames are what cover the whole bolt. Damage on the face toward the camera (pits, surface marks) does not change the outline and goes unseen. An unthreaded shank section reads as missing threads.</p>
+  </div>
+</div>
+</div>
+
+<script>
+// BoltCV core: silhouette-based thread inspection. Pure JS, no deps.
+const BoltCV = (() => {
+  const SIZES = [
+    ['M3',3,0.5],['M4',4,0.7],['M5',5,0.8],['M6',6,1.0],['M8',8,1.25],['M10',10,1.5],
+    ['M12',12,1.75],['M14',14,2.0],['M16',16,2.0],['M20',20,2.5],
+    ['#10-24',4.826,25.4/24],['1/4-20',6.35,1.27],['5/16-18',7.9375,25.4/18],
+    ['3/8-16',9.525,25.4/16],['1/2-13',12.7,25.4/13]
+  ];
+
+  function blur(g, W, H) {
+    const t = new Float32Array(W * H), o = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, a = x > 0 ? g[i - 1] : g[i], b = x < W - 1 ? g[i + 1] : g[i];
+      t[i] = (a + 2 * g[i] + b) / 4;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, a = y > 0 ? t[i - W] : t[i], b = y < H - 1 ? t[i + W] : t[i];
+      o[i] = (a + 2 * t[i] + b) / 4;
+    }
+    return o;
+  }
+
+  function otsu(g) {
+    const h = new Float64Array(256);
+    for (let i = 0; i < g.length; i++) h[Math.max(0, Math.min(255, g[i] | 0))]++;
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * h[i];
+    let sB = 0, wB = 0, best = -1, t = 128; const n = g.length;
+    for (let i = 0; i < 256; i++) {
+      wB += h[i]; if (!wB) continue; const wF = n - wB; if (!wF) break;
+      sB += i * h[i]; const v = wB * wF * (sB / wB - (sum - sB) / wF) ** 2;
+      if (v > best) { best = v; t = i + 0.5; }
+    }
+    return t;
+  }
+
+  const median = a => { const s = [...a].filter(Number.isFinite).sort((x, y) => x - y); if (!s.length) return NaN; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const pct = (a, p) => { const s = [...a].filter(Number.isFinite).sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+
+  function movAvg(x, w) {
+    const n = x.length, o = new Float64Array(n), h = Math.max(1, w >> 1);
+    const c = new Float64Array(n + 1); for (let i = 0; i < n; i++) c[i + 1] = c[i] + x[i];
+    for (let i = 0; i < n; i++) { const a = Math.max(0, i - h), b = Math.min(n, i + h + 1); o[i] = (c[b] - c[a]) / (b - a); }
+    return o;
+  }
+
+  function gauss(x, sg) {
+    if (sg < 0.4) return x.slice(); const r = Math.ceil(3 * sg), k = []; let ks = 0;
+    for (let j = -r; j <= r; j++) { const w = Math.exp(-j * j / (2 * sg * sg)); k.push(w); ks += w; }
+    const n = x.length; return x.map((_, i) => { let s = 0; for (let j = -r; j <= r; j++) s += k[j + r] * x[Math.max(0, Math.min(n - 1, i + j))]; return s / ks; });
+  }
+  function hampel(x, h = 3) {
+    const n = x.length; return x.map((v, i) => {
+      const w = x.slice(Math.max(0, i - h), Math.min(n, i + h + 1)), m = median(w), mad = median(w.map(a => Math.abs(a - m)));
+      return Math.abs(v - m) > 3 * 1.4826 * mad + 0.4 ? m : v;
+    });
+  }
+  function linfit(xs, ys) {
+    const n = xs.length; let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+    const d = n * sxx - sx * sx; const b = d ? (n * sxy - sx * sy) / d : 0; return { a: (sy - b * sx) / n, b };
+  }
+  function robustFit(xs, ys) {
+    let f = linfit(xs, ys);
+    const res = xs.map((x, i) => Math.abs(ys[i] - (f.a + f.b * x)));
+    const mad = median(res) || 1e-9, kx = [], ky = [];
+    xs.forEach((x, i) => { if (res[i] < 2.5 * mad + 0.5) { kx.push(x); ky.push(ys[i]); } });
+    return kx.length >= 3 ? linfit(kx, ky) : f;
+  }
+
+  function autocorr(x, maxLag) {
+    const n = x.length; let v = 0; for (const a of x) v += a * a; v /= n;
+    const ac = new Float64Array(maxLag + 1);
+    for (let L = 0; L <= maxLag; L++) { let s = 0; for (let i = 0; i + L < n; i++) s += x[i] * x[i + L]; ac[L] = s / (n - L) / (v || 1); }
+    return ac;
+  }
+
+  function findPitch(x1, x2) {
+    const n = x1.length, maxLag = Math.floor(n / 3);
+    if (maxLag < 6) return null;
+    const a1 = autocorr(x1, maxLag), a2 = autocorr(x2, maxLag), ac = a1.map((v, i) => (v + a2[i]) / 2);
+    let firstNeg = -1; for (let L = 1; L <= maxLag; L++) if (ac[L] < 0) { firstNeg = L; break; }
+    if (firstNeg < 0) return null;
+    let gmax = 0; for (let L = firstNeg; L < maxLag; L++) gmax = Math.max(gmax, ac[L]);
+    for (let L = firstNeg + 1; L < maxLag; L++) {
+      if (ac[L] >= ac[L - 1] && ac[L] >= ac[L + 1] && ac[L] > 0.5 * gmax && ac[L] > 0.15) {
+        const d = ac[L - 1] - 2 * ac[L] + ac[L + 1]; const off = d ? 0.5 * (ac[L - 1] - ac[L + 1]) / d : 0;
+        return { p: L + off, strength: ac[L] };
+      }
+    }
+    return null;
+  }
+
+  // Crest finding + per-tooth metrics on one flank profile r (raw) over shank samples
+  function analyzeFlank(r, p, rM = r) {
+    const n = r.length, tr = movAvg(r, Math.round(p) | 1), d = r.map((v, i) => v - tr[i]);
+    const sm = movAvg(d, 3), h = Math.max(2, Math.round(0.4 * p)), crests = [];
+    for (let i = h; i < n - h; i++) {
+      let ok = true;
+      for (let j = i - h; j <= i + h && ok; j++) if (j !== i && (sm[j] > sm[i] || (j < i && sm[j] === sm[i]))) ok = false;
+      if (!ok) continue;
+      const den = sm[i - 1] - 2 * sm[i] + sm[i + 1], off = den ? Math.max(-0.5, Math.min(0.5, 0.5 * (sm[i - 1] - sm[i + 1]) / den)) : 0;
+      const w = Math.round(0.6 * p);
+      let lm = Infinity, rm = Infinity, li = i, ri = i;
+      for (let j = Math.max(0, i - w); j <= i; j++) if (r[j] < lm) { lm = r[j]; li = j; }
+      for (let j = i; j <= Math.min(n - 1, i + w); j++) if (r[j] < rm) { rm = r[j]; ri = j; }
+      let a1 = Infinity, a2 = Infinity; const q = Math.max(1, Math.round(0.12 * p)); let top = -Infinity;
+      for (let j = Math.max(0, i - w); j <= i; j++) a1 = Math.min(a1, rM[j]);
+      for (let j = i; j <= Math.min(n - 1, i + w); j++) a2 = Math.min(a2, rM[j]);
+      for (let j = Math.max(0, i - q); j <= Math.min(n - 1, i + q); j++) top = Math.max(top, rM[j]);
+      const depth = top - (a1 + a2) / 2;
+      // flank half-widths at mid-depth → tooth lean
+      const mid = (r[i] + (lm + rm) / 2) / 2; let L = 0, R = 0;
+      for (let j = i; j > li; j--) if (r[j - 1] < mid) { L = i - j + (r[j] - mid) / ((r[j] - r[j - 1]) || 1); break; }
+      for (let j = i; j < ri; j++) if (r[j + 1] < mid) { R = j - i + (r[j] - mid) / ((r[j] - r[j + 1]) || 1); break; }
+      crests.push({ i, u: i + off, r: top, depth, lean: L + R > 0 ? (L - R) / (L + R) : 0 });
+    }
+    return crests;
+  }
+
+  function analyze(gray, W, H, opt = {}) {
+    const out = { ok: false, flags: [] };
+    let g = blur(gray, W, H); if (Math.max(W, H) > 700) g = blur(g, W, H); if (Math.max(W, H) > 1000) g = blur(g, W, H);
+    const thr = otsu(g);
+    let bs = 0, bc = 0;
+    for (let x = 0; x < W; x++) { bs += g[x] < thr ? 1 : 0; bs += g[(H - 1) * W + x] < thr ? 1 : 0; bc += 2; }
+    for (let y = 0; y < H; y++) { bs += g[y * W] < thr ? 1 : 0; bs += g[y * W + W - 1] < thr ? 1 : 0; bc += 2; }
+    const darkFg = bs / bc < 0.5; // background is mostly bright → bolt is dark
+    const inside = (x, y) => { const v = sampleG(g, W, H, x, y); return darkFg ? v < thr : v > thr; };
+    const mask = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) mask[i] = darkFg ? (g[i] < thr) : (g[i] > thr);
+
+    // connected components (4-conn), pick largest that does not wrap the frame
+    const lab = new Int32Array(W * H), stack = new Int32Array(W * H); let nl = 0, best = 0, bestA = 0;
+    for (let s = 0; s < W * H; s++) {
+      if (!mask[s] || lab[s]) continue; nl++; let sp = 0, area = 0, edges = 0; stack[sp++] = s; lab[s] = nl;
+      let tl = 0, tr = 0, tt = 0, tb = 0;
+      while (sp) {
+        const i = stack[--sp], x = i % W, y = (i / W) | 0; area++;
+        if (x === 0) tl = 1; if (x === W - 1) tr = 1; if (y === 0) tt = 1; if (y === H - 1) tb = 1;
+        if (x > 0 && mask[i - 1] && !lab[i - 1]) { lab[i - 1] = nl; stack[sp++] = i - 1; }
+        if (x < W - 1 && mask[i + 1] && !lab[i + 1]) { lab[i + 1] = nl; stack[sp++] = i + 1; }
+        if (y > 0 && mask[i - W] && !lab[i - W]) { lab[i - W] = nl; stack[sp++] = i - W; }
+        if (y < H - 1 && mask[i + W] && !lab[i + W]) { lab[i + W] = nl; stack[sp++] = i + W; }
+      }
+      edges = tl + tr + tt + tb;
+      if (edges < 3 && area > bestA) { bestA = area; best = nl; }
+    }
+    if (!best || bestA < W * H * 0.004) { out.error = 'No bolt found. Use a plain, contrasting background and fill more of the frame.'; return out; }
+
+    // PCA → axis
+    let mx = 0, my = 0, n = 0;
+    for (let i = 0; i < W * H; i++) if (lab[i] === best) { mx += i % W; my += (i / W) | 0; n++; }
+    mx /= n; my /= n; let cxx = 0, cyy = 0, cxy = 0;
+    for (let i = 0; i < W * H; i++) if (lab[i] === best) { const dx = i % W - mx, dy = ((i / W) | 0) - my; cxx += dx * dx; cyy += dy * dy; cxy += dx * dy; }
+    let ang = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+    let ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux;
+    let umin = Infinity, umax = -Infinity, vmax = 0;
+    for (let i = 0; i < W * H; i++) if (lab[i] === best) {
+      const dx = i % W - mx, dy = ((i / W) | 0) - my, u = dx * ux + dy * uy, v = Math.abs(dx * vx + dy * vy);
+      if (u < umin) umin = u; if (u > umax) umax = u; if (v > vmax) vmax = v;
+    }
+    const inComp = (x, y) => { const xi = Math.round(x), yi = Math.round(y); return xi >= 0 && yi >= 0 && xi < W && yi < H && lab[yi * W + xi] === best; };
+
+    // Second threshold inside the blob: separates bolt (core) from attached shadow
+    const cvals = []; for (let i = 0; i < W * H; i++) if (lab[i] === best) cvals.push(g[i]);
+    const t2 = otsu(cvals); let lo = 0, nlo = 0, hi = 0, nhi = 0;
+    for (const v of cvals) v < t2 ? (lo += v, nlo++) : (hi += v, nhi++);
+    const sep = nlo && nhi ? hi / nhi - lo / nlo : 0, mode = opt.shadow || 'auto';
+    const t2ok = mode !== 'off' && sep > 18;
+    const inside2 = (x, y) => { const v = sampleG(g, W, H, x, y); return darkFg ? v < t2 : v > t2; };
+
+    // March inward from outside; first hit of the test fn; sub-pixel refine on gray
+    const edgeAt = (u, s, test) => {
+      const bx = mx + u * ux, by = my + u * uy;
+      for (let d = vmax + 3; d >= 0; d -= 0.5) {
+        const x = bx + s * d * vx, y = by + s * d * vy;
+        if (inComp(x, y) && test(x, y)) {
+          let a = d - 1, b = d + 1.5;
+          if (!test(bx + s * a * vx, by + s * a * vy) || test(bx + s * b * vx, by + s * b * vy)) return d + 0.25;
+          for (let k = 0; k < 12; k++) { const m = (a + b) / 2; test(bx + s * m * vx, by + s * m * vy) ? a = m : b = m; }
+          return (a + b) / 2;
+        }
+      }
+      return NaN;
+    };
+    const gradAt = (u, s, d) => { const bx = mx + u * ux, by = my + u * uy; return Math.abs(sampleG(g, W, H, bx + s * (d + 1.5) * vx, by + s * (d + 1.5) * vy) - sampleG(g, W, H, bx + s * (d - 1.5) * vx, by + s * (d - 1.5) * vy)); };
+    const N = Math.floor(umax - umin) + 1;
+    let us, top, bot, wid, shadowSides = [];
+    const measure = () => {
+      us = []; top = []; bot = []; wid = []; shadowSides = [];
+      const e = { 1: [[], []], '-1': [[], []] };
+      for (let k = 0; k < N; k++) { const u = umin + k; us.push(u); for (const s of [1, -1]) { e[s][0].push(edgeAt(u, s, inside)); e[s][1].push(t2ok ? edgeAt(u, s, inside2) : NaN); } }
+      const rad = median([...e[1][0], ...e['-1'][0]]), st = {};
+      for (const s of [1, -1]) {
+        const [e1, e2] = e[s], gaps = [], g1 = [], g2 = [];
+        if (t2ok) for (let k = 0; k < N; k += 2) if (Number.isFinite(e1[k]) && Number.isFinite(e2[k])) { gaps.push(e1[k] - e2[k]); g1.push(gradAt(us[k], s, e1[k])); g2.push(gradAt(us[k], s, e2[k])); }
+        st[s] = { mg: gaps.length ? median(gaps) : 0, sharp: gaps.length ? median(g2) > 0.9 * median(g1) : false };
+      }
+      for (const s of [1, -1]) {
+        const a = st[s], other = st[-s];
+        // shadow if the dark-core edge sits well inside the outer edge, and either it is the sharper edge,
+        // or the gap is one-sided (a single light throws a shadow to one side only)
+        const isSh = t2ok && a.mg > Math.max(1.5, 0.06 * rad) && (mode === 'strong' || a.sharp || a.mg > 2.5 * Math.max(other.mg, 1));
+        if (isSh) shadowSides.push(s);
+        (s === 1 ? top : bot).push(...e[s][isSh ? 1 : 0]);
+      }
+      for (let k = 0; k < N; k++) wid.push(top[k] + bot[k]);
+    };
+    measure();
+    // re-centre the axis on the measured silhouette (a one-sided shadow skews the PCA axis), then re-measure
+    {
+      const xs = [], cs = []; for (let k = 0; k < N; k++) if (Number.isFinite(wid[k])) { xs.push(us[k]); cs.push((top[k] - bot[k]) / 2); }
+      const f = linfit(xs, cs);
+      if (Math.abs(f.b) > 0.002 || Math.abs(f.a) > 0.5) {
+        mx += f.a * vx; my += f.a * vy; ang += Math.atan(f.b);
+        ux = Math.cos(ang); uy = Math.sin(ang); vx = -uy; vy = ux; vmax += 6; measure();
+      }
+    }
+    out.shadow = shadowSides.length ? shadowSides : null;
+
+    // orient: head at start
+    const q = Math.max(3, Math.floor(N * 0.12)), wa = median(wid.slice(0, q)), wb = median(wid.slice(N - q));
+    if (wb > wa) { us.reverse(); top.reverse(); bot.reverse(); wid.reverse(); us.forEach((u, i) => us[i] = -u); ux = -ux; uy = -uy; vx = -vx; vy = -vy; top.forEach((_, i) => { const t = top[i]; top[i] = bot[i]; bot[i] = t; }); }
+
+    // shank = longest run with width near the 30th percentile
+    const ref = pct(wid, 0.3); let bs0 = 0, bl = 0, cs = -1, gap = 0;
+    for (let k = 0; k <= N; k++) {
+      const ok = k < N && wid[k] > 0.55 * ref && wid[k] < 1.3 * ref;
+      if (ok) { if (cs < 0) cs = k; gap = 0; }
+      else if (cs >= 0) { gap++; if (gap > 3 || k === N) { const e = k - gap; if (e - cs > bl) { bl = e - cs + 1; bs0 = cs; } cs = -1; gap = 0; } }
+    }
+    if (bl < 20) { out.error = 'Could not isolate a threaded shank. Shoot the bolt side-on with the whole length visible.'; return out; }
+    const sTop = top.slice(bs0, bs0 + bl), sBot = bot.slice(bs0, bs0 + bl);
+    const fill = a => { let last = median(a); return a.map(v => Number.isFinite(v) ? (last = v) : last); };
+    let T = hampel(fill(sTop)), B = hampel(fill(sBot));
+    const det = a => { const xs = a.map((_, i) => i), f = linfit(xs, a); return a.map((v, i) => v - f.a - f.b * i); };
+    const pr = findPitch(det(T), det(B));
+    out.geom = { mx, my, ux, uy, vx, vy, us, top, bot, s0: bs0, len: bl, darkFg };
+    out.ok = true;
+    if (!pr) {
+      out.flags.push({ sev: 3, kind: 'No threads', msg: 'No periodic thread profile found along the shank — threads missing, fully stripped, or out of focus.', a: 0, b: 1 });
+      out.verdict = 'FAIL'; out.metrics = { shankPx: bl }; return out;
+    }
+    let p = pr.p;
+    // pitch-scaled Gaussian: kills layer lines / texture / JPEG jaggies (periods << pitch), keeps the thread form
+    const sig = p * ({ light: 1 / 16, medium: 1 / 10, strong: 1 / 6.5 }[opt.smooth || 'medium']);
+    // edge noise from 2nd differences (insensitive to the thread form itself)
+    const d2 = []; for (const a of [T, B]) for (let i = 1; i < bl - 1; i++) d2.push(a[i] - (a[i - 1] + a[i + 1]) / 2);
+    const nz = 1.4826 * median(d2.map(Math.abs)) / Math.sqrt(1.5);
+    const TM = gauss(T, Math.max(sig * 0.5, p / 16)), BM = gauss(B, Math.max(sig * 0.5, p / 16)); // for measuring depth / diameter
+    T = gauss(T, sig); B = gauss(B, sig); // for finding crests and shape
+    for (let i = 0; i < bl; i++) { top[bs0 + i] = T[i]; bot[bs0 + i] = B[i]; }
+    const cT = analyzeFlank(T, p, TM), cB = analyzeFlank(B, p, BM);
+
+    // refine pitch with crest index fit across both flanks
+    const idxFit = cr => {
+      const md = median(cr.map(c => c.depth)), ok = cr.filter(c => c.depth >= 0.5 * md);
+      if (ok.length < 3) return null; const u0 = ok[0].u; cr.forEach(c => c.n = Math.round((c.u - u0) / p));
+      return robustFit(ok.map(c => c.n), ok.map(c => c.u));
+    };
+    const fT = idxFit(cT), fB = idxFit(cB);
+    if (fT && fB) p = (fT.b * cT.length + fB.b * cB.length) / (cT.length + cB.length);
+    else if (fT || fB) p = (fT || fB).b;
+
+    const margin = 1.2 * p, all = [];
+    const tag = (cr, f, side, R) => {
+      const inner = cr.filter(c => c.u > margin && c.u < bl - margin);
+      const medD = median(inner.map(c => c.depth));
+      const rf = robustFit(inner.map(c => c.u), inner.map(c => c.r));
+      cr.forEach((c, k) => {
+        c.side = side; c.edge = c.u <= margin || c.u >= bl - margin; c.issues = [];
+        if (f) c.res = c.u - (f.a + f.b * c.n);
+        if (c.edge) return;
+        if (c.depth < 0.5 * medD) c.issues.push([3, 'Stripped / flattened']);
+        else if (c.r < rf.a + rf.b * c.u - 0.4 * medD - 2 * nz) c.issues.push([2, 'Truncated crest']);
+        const posNz = nz * (p / 2) / Math.max(medD, 0.5);
+        if (c.res !== undefined && Math.abs(c.res) > Math.max(0.18 * p, 3 * posNz) && c.depth >= 0.5 * medD) c.issues.push([2, 'Displaced thread']);
+        if (Math.abs(c.lean) > Math.max(0.35, 0.35 + 4 * posNz / p) && c.depth > 0.5 * medD) c.issues.push([2, 'Leaning flank']);
+        const nx = cr[k + 1];
+        if (nx && !nx.edge) { const gp = (nx.u - c.u) / p; if (gp > 1.55) c.issues.push([3, `Missing thread${gp > 2.5 ? 's' : ''}`]); else if (gp < 0.75 || gp > 1.25) c.issues.push([1, 'Pitch irregular']); }
+      });
+      inner.forEach(c => all.push(c));
+      return { medD, rf };
+    };
+    const sT = tag(cT, fT, 'top', T), sB = tag(cB, fB, 'bottom', B);
+    const medDepth = (sT.medD + sB.medD) / 2;
+
+    // spacing stats
+    const sp = []; [[cT, sT.medD], [cB, sB.medD]].forEach(([cr, md]) => { for (let k = 1; k < cr.length; k++) { const gp = cr[k].u - cr[k - 1].u; if (gp < 1.5 * p && cr[k].depth >= 0.5 * md && cr[k - 1].depth >= 0.5 * md) sp.push(gp); } });
+    const spMean = sp.reduce((a, b) => a + b, 0) / (sp.length || 1);
+    const cv = Math.sqrt(sp.reduce((a, b) => a + (b - spMean) ** 2, 0) / (sp.length || 1)) / spMean;
+
+    // helix phase offset top vs bottom (single-start → 0.5)
+    const phase = cr => { let s = 0, c = 0; cr.filter(x => !x.edge).forEach(x => { const a = 2 * Math.PI * x.u / p; s += Math.sin(a); c += Math.cos(a); }); return Math.atan2(s, c) / (2 * Math.PI); };
+    let off = ((phase(cT) - phase(cB)) % 1 + 1) % 1;
+
+    // straightness & taper
+    const cl = movAvg(T.map((t, i) => (t - B[i]) / 2), (Math.round(2 * p) | 1)), xs = cl.map((_, i) => i), lf = linfit(xs, cl);
+    let bow = 0; for (let i = Math.round(p); i < bl - p; i++) bow = Math.max(bow, Math.abs(cl[i] - lf.a - lf.b * i));
+    const Dat = u => sT.rf.a + sT.rf.b * u + sB.rf.a + sB.rf.b * u, Dmaj = Dat(bl / 2);
+    const taper = Math.abs(Dat(bl - margin) - Dat(margin)) / Dmaj;
+
+    // flags: cluster crest issues into zones
+    const issues = all.filter(c => c.issues.length).sort((a, b) => a.u - b.u);
+    const zones = [];
+    issues.forEach(c => {
+      const sev = Math.max(...c.issues.map(i => i[0])), kind = c.issues.find(i => i[0] === sev)[1];
+      const z = zones.find(z => z.kind === kind && c.u - z.b < 2.2 * p);
+      if (z) { z.b = c.u; z.n++; z.sev = Math.max(z.sev, sev); z.sides.add(c.side); } else zones.push({ kind, sev, a: c.u, b: c.u, n: 1, sides: new Set([c.side]) });
+    });
+    const MSG = {
+      'Stripped / flattened': 'thread depth under half of normal — sheared, worn or under-printed',
+      'Truncated crest': 'crest tips cut down below the major diameter',
+      'Displaced thread': 'crest out of position on the helix — typical of cross-threading or a layer shift',
+      'Leaning flank': 'tooth is lopsided — flank pushed over, as when cross-threaded',
+      'Missing thread': 'a crest is absent where the pitch says one should be',
+      'Missing threads': 'several crests absent where the pitch says they should be',
+      'Pitch irregular': 'local crest spacing off by more than 25%'
+    };
+    zones.forEach(z => {
+      if (z.n === 1 && z.sev < 3 && opt.smooth !== 'light') return; // lone wobble = noise, not a defect
+      const sev = z.n === 1 && z.sev === 2 ? 1 : (z.kind === 'Displaced thread' && z.n >= 3 ? 3 : z.sev);
+      out.flags.push({ sev, kind: z.kind, msg: `${MSG[z.kind]} (${z.n} crest${z.n > 1 ? 's' : ''}, ${[...z.sides].join(' & ')} flank)`, a: Math.max(0, (z.a - p / 2) / bl), b: Math.min(1, (z.b + p / 2) / bl) });
+    });
+    const dr = medDepth / p;
+    if (Math.abs(off - 0.5) > 0.18) out.flags.push({ sev: 2, kind: 'Not helical', msg: `Top and bottom crests line up (offset ${(off).toFixed(2)} pitch, expect 0.50). Looks like rings or a double-start, not a single helix — check the CAD thread feature.`, a: 0, b: 1 });
+    if (dr < 0.3) out.flags.push({ sev: 2, kind: 'Shallow threads', msg: `Thread depth is ${(dr).toFixed(2)}× pitch (ISO ≈ 0.61). Over-extrusion, too-coarse layers, or no clearance in the model.`, a: 0, b: 1 });
+    if (cv > 0.12) out.flags.push({ sev: 1, kind: 'Uneven pitch', msg: `Crest spacing varies ${(cv * 100).toFixed(0)}% overall.`, a: 0, b: 1 });
+    if (bow / Dmaj > 0.02) out.flags.push({ sev: bow / Dmaj > 0.05 ? 3 : 1, kind: 'Bent shank', msg: `Centreline bows ${(100 * bow / Dmaj).toFixed(1)}% of diameter.`, a: 0, b: 1 });
+    if (taper > 0.05) out.flags.push({ sev: 1, kind: 'Tapered', msg: `Major diameter changes ${(100 * taper).toFixed(1)}% along the length — warping or uneven shrinkage.`, a: 0, b: 1 });
+    if (p < 7) out.flags.push({ sev: 1, kind: 'Low resolution', msg: `Only ${p.toFixed(1)} px per thread. Move closer for reliable results (aim for 12+).`, a: 0, b: 1 });
+
+    // calibration
+    const m = { pitchPx: p, Dpx: Dmaj, depthRatio: dr, pitchCV: cv, phase: off, bow: bow / Dmaj, taper, threads: Math.round(bl / p), noise: nz / Math.max(medDepth, 0.5), strength: pr.strength, pPerD: p / Dmaj };
+    const sz = SIZES.find(s => s[0] === opt.size);
+    if (sz) {
+      const mmpp = sz[1] / Dmaj; m.pitchMm = p * mmpp; m.nomPitch = sz[2]; m.depthMm = medDepth * mmpp;
+      const dev = (m.pitchMm - sz[2]) / sz[2];
+      if (Math.abs(dev) > 0.08) out.flags.push({ sev: 3, kind: 'Wrong pitch', msg: `Measured ${m.pitchMm.toFixed(2)} mm vs ${sz[2].toFixed(2)} mm nominal for ${sz[0]} (${(dev * 100).toFixed(0)}%). Won't mate — check the model or slicer scaling.`, a: 0, b: 1 });
+    }
+    if (opt.ref) {
+      const dp = (m.pPerD - opt.ref.pPerD) / opt.ref.pPerD, dd = (dr - opt.ref.depthRatio) / opt.ref.depthRatio;
+      if (Math.abs(dp) > 0.06) out.flags.push({ sev: 2, kind: 'Differs from reference', msg: `Pitch/diameter ratio is ${(dp * 100).toFixed(0)}% off your saved good bolt.`, a: 0, b: 1 });
+      if (dd < -0.25) out.flags.push({ sev: 2, kind: 'Shallower than reference', msg: `Threads are ${(-dd * 100).toFixed(0)}% shallower than your saved good bolt.`, a: 0, b: 1 });
+    }
+    out.flags.sort((a, b) => b.sev - a.sev);
+    const ms = out.flags.reduce((a, f) => Math.max(a, f.sev), 0);
+    out.verdict = ms >= 3 ? 'FAIL' : ms === 2 ? 'CHECK' : 'PASS';
+    out.score = Math.max(0, 100 - out.flags.reduce((a, f) => a + [0, 4, 15, 35][f.sev], 0));
+    out.metrics = m; out.crests = [...cT, ...cB]; out.geom.T = T; out.geom.B = B;
+    return out;
+  }
+
+  function sampleG(g, W, H, x, y) {
+    if (x < 0 || y < 0 || x > W - 1.001 || y > H - 1.001) return g[Math.max(0, Math.min(H - 1, Math.round(y))) * W + Math.max(0, Math.min(W - 1, Math.round(x)))];
+    const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i = y0 * W + x0;
+    return g[i] * (1 - fx) * (1 - fy) + g[i + 1] * fx * (1 - fy) + g[i + W] * (1 - fx) * fy + g[i + W + 1] * fx * fy;
+  }
+
+  // Synthetic bolt photo for demos/tests
+  function synth(W, H, o = {}) {
+    const ang = o.angle ?? 0.2, ca = Math.cos(ang), sa = Math.sin(ang), L = W * 0.78, R = o.R ?? H * 0.13, p = o.pitch ?? 2 * R * 1.25 / 8;
+    const depth = p * 0.58, rMin = R - depth, headL = L * 0.16, headR = R * 1.75, cx = W / 2, cy = H / 2;
+    let seed = o.seed ?? 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const g = new Uint8ClampedArray(W * H);
+    const prof = (u, side) => {
+      const x = u + L / 2;
+      if (x < 0 || x > L) return -1;
+      if (x < headL) return headR - Math.max(0, 6 - x, x - headL + 6);
+      const s = x - headL; let ph = s / p + (side ? 0.5 : 0), r;
+      if (o.cross) { const [a, b] = o.cross, t = (s / (L - headL) - a) / (b - a); if (t > 0 && t < 1) ph += 0.28 * Math.sin(Math.PI * t); }
+      const fr = ((ph % 1) + 1) % 1, tri = Math.min(1 - Math.abs(fr - 0.5) * 2, 0.86) / 0.86;
+      r = rMin + depth * tri;
+      if (o.strip) { const [a, b] = o.strip, t = s / (L - headL); if (t > a && t < b) r = Math.min(r, rMin + depth * 0.18); }
+      if (o.cross) { const [a, b] = o.cross, t = s / (L - headL); if (t > a && t < b) r = Math.min(r, rMin + depth * 0.7); }
+      const tipD = L - x; if (tipD < p) r = Math.min(r, rMin + tipD * 0.6);
+      return r;
+    };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const dx = x - cx, dy = y - cy, u = dx * ca + dy * sa, v = -dx * sa + dy * ca;
+      let r = prof(u, v < 0 ? 1 : 0);
+      if (o.rough && r > 0) { const ui = Math.round(u), h = Math.sin(ui * 12.9898 + (v < 0 ? 78.233 : 0)) * 43758.5453; r += o.rough * (0.6 * Math.sin(u * 2 * Math.PI / (p / 6)) + 1.4 * (h - Math.floor(h) - 0.5)); }
+      const cov = Math.max(0, Math.min(1, r - Math.abs(v) + 0.5));
+      let bg = 222 - 18 * (y / H) + (rnd() - 0.5) * 10;
+      if (o.shadow) { const [sx, sy, bw, dk] = o.shadow, ex = dx - sx, ey = dy - sy, u2 = ex * ca + ey * sa, v2 = -ex * sa + ey * ca, r2 = prof(u2, v2 < 0 ? 1 : 0); bg *= 1 - dk * Math.max(0, Math.min(1, (r2 - Math.abs(v2)) / bw + 0.5)); }
+      const fg = 52 + 30 * Math.abs(v) / (headR) + (rnd() - 0.5) * 10;
+      g[y * W + x] = bg * (1 - cov) + fg * cov;
+    }
+    return g;
+  }
+
+  return { analyze, synth, SIZES };
+})();
+
+
+</script>
+<script>
+// ---------------- SorterLink: one protocol over BLE (Nordic UART) or Wi-Fi (HTTP) ----------------
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e', NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e', NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+class SorterLink {
+  constructor() { this.kind = null; this.h = {}; this.pend = []; this.buf = ''; this.wq = Promise.resolve(); this.cv = -1; this.tid = -1; this.gen = 0; }
+  on(ev, f) { (this.h[ev] ||= []).push(f); return this; }
+  emit(ev, d) { (this.h[ev] || []).forEach(f => { try { f(d); } catch (e) { console.error(e); } }); }
+  get connected() { return !!this.kind; }
+  close(why) {
+    const was = this.kind; this.kind = null; this.gen++;
+    this.pend.splice(0).forEach(p => { clearTimeout(p.t); p.rej(new Error('disconnected')); });
+    if (this.dev) { try { this.dev.gatt.disconnect(); } catch {} this.dev = null; }
+    if (was) this.emit('close', why || 'Disconnected');
+  }
+  async connectBLE() {
+    if (!navigator.bluetooth) throw new Error('This browser has no Web Bluetooth. Use Chrome or Edge (Android, Mac, Windows, ChromeOS) or the Bluefy app on iPhone, or connect over Wi-Fi.');
+    this.close();
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
+    dev.addEventListener('gattserverdisconnected', () => { if (this.dev === dev) { this.dev = null; this.close('Bluetooth link lost'); } });
+    const gatt = await dev.gatt.connect(), svc = await gatt.getPrimaryService(NUS);
+    this.rx = await svc.getCharacteristic(NUS_RX); this.tx = await svc.getCharacteristic(NUS_TX);
+    this.tx.addEventListener('characteristicvaluechanged', e => this._chunk(new TextDecoder().decode(e.target.value)));
+    await this.tx.startNotifications();
+    this.dev = dev; this.buf = ''; this.kind = 'ble'; this.cv = -1; this.tid = -1; this.gen++;
+    this.emit('open', 'Bluetooth: ' + (dev.name || 'BoltSorter'));
+  }
+  async connectHTTP(base) {
+    this.close();
+    base = String(base || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(base)) base = 'http://' + base;
+    const s = await this._get(base + '/api/status');
+    this.base = base; this.kind = 'wifi'; this.cv = -1; this.tid = -1; this.fails = 0; const g = ++this.gen;
+    this.emit('open', 'Wi-Fi: ' + base.replace(/^https?:\/\//, ''));
+    this._status(s); this._poll(g);
+  }
+  _get(url) {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 3000), o = { cache: 'no-store', signal: ac.signal };
+    if (location.protocol === 'https:') o.targetAddressSpace = 'local';   // Chrome local-network access from an https page
+    return fetch(url, o).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).finally(() => clearTimeout(t));
+  }
+  async _poll(g) {
+    while (this.kind === 'wifi' && g === this.gen) {
+      await new Promise(r => setTimeout(r, 300));
+      if (this.kind !== 'wifi' || g !== this.gen) return;
+      try { this._status(await this._get(this.base + '/api/status')); this.fails = 0; }
+      catch { if (++this.fails >= 5) { this.close('Wi-Fi link lost'); return; } }
+    }
+  }
+  _chunk(s) {
+    this.buf += s; let i;
+    while ((i = this.buf.indexOf('\n')) >= 0) { const line = this.buf.slice(0, i); this.buf = this.buf.slice(i + 1); if (line) this._msg(line); }
+    if (this.buf.length > 20000) this.buf = '';
+  }
+  _msg(line) {
+    let m; try { m = JSON.parse(line); } catch { return; }
+    if (m.t === 's') return this._status(m);
+    if (m.t === 'c') this.emit('config', m);
+    if (m.t === 'tr') this.emit('trace', m);
+    const p = this.pend.shift(); if (p) { clearTimeout(p.t); p.res(m); }
+  }
+  _status(s) {
+    this.last = s; this.emit('status', s);
+    if (s.cv !== this.cv) { this.cv = s.cv; this.refreshConfig(); }
+    if (s.tr === 2 && s.tid !== this.tid) { this.tid = s.tid; this.fetchTrace(); }
+  }
+  refreshConfig() { return this.send('get').catch(() => {}); }
+  fetchTrace() {
+    if (this.kind === 'wifi') return this._get(this.base + '/api/trace').then(m => this.emit('trace', m)).catch(() => {});
+    return this.send('trace').catch(() => {});
+  }
+  send(cmd) {
+    if (!this.kind) return Promise.reject(new Error('Not connected'));
+    if (this.kind === 'wifi') return this._get(this.base + '/api/cmd?c=' + encodeURIComponent(cmd)).then(m => { if (m.t === 'c') this.emit('config', m); this.emit('reply', m); return m; });
+    return new Promise((res, rej) => {
+      const p = { res: m => { this.emit('reply', m); res(m); }, rej };
+      p.t = setTimeout(() => { const i = this.pend.indexOf(p); if (i >= 0) this.pend.splice(i, 1); rej(new Error('No reply')); }, 5000);
+      this.pend.push(p);
+      const data = new TextEncoder().encode(cmd.replace(/\n/g, ' ') + '\n'), rx = this.rx;
+      this.wq = this.wq.then(async () => {
+        for (let i = 0; i < data.length; i += 20) { const c = data.slice(i, i + 20); rx.writeValueWithResponse ? await rx.writeValueWithResponse(c) : await rx.writeValue(c); }
+      }).catch(e => { const i = this.pend.indexOf(p); if (i >= 0) { this.pend.splice(i, 1); clearTimeout(p.t); rej(e); } });
+    });
+  }
+}
+
+</script>
+<script>
+// Bolt-level decision from many frames of one rotation. Pure function: frames -> {v, reason}.
+// frame = {empty, ok, v:'PASS'|'CHECK'|'FAIL'|null, kinds:[...]}
+function decideBolt(frames, AG) {
+  const n = frames.length;
+  if (!n) return { v: null, reason: 'no frames' };
+  const seen = frames.filter(f => !f.empty), read = seen.filter(f => f.ok && f.v);
+  if (seen.length < Math.max(2, 0.3 * n)) return { v: 'e', reason: `no bolt in ${n - seen.length}/${n} frames` };
+  if (read.length < Math.max(2, 0.3 * seen.length)) return { v: 'b', reason: `threads unreadable (${read.length}/${seen.length} frames read)` };
+  const fail = read.filter(f => f.v === 'FAIL'), check = read.filter(f => f.v === 'CHECK');
+  const weight = fail.length + 0.5 * check.length;
+  // A real defect stays on the silhouette for several neighbouring tube angles; noise is a lone frame.
+  let run = 0, longest = 0;
+  read.forEach(f => { run = f.v === 'FAIL' ? run + 1 : 0; longest = Math.max(longest, run); });
+  if (longest >= AG.minFail || (fail.length && weight >= AG.frac * read.length)) {
+    const tally = {};
+    fail.forEach(f => f.kinds.forEach(k => tally[k] = (tally[k] || 0) + 1));
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, c]) => `${k} ×${c}`).join(', ');
+    return { v: 'b', reason: `${fail.length}/${read.length} frames fail${top ? ': ' + top : ''}` };
+  }
+  return { v: 'g', reason: `${read.length - fail.length}/${read.length} frames pass` };
+}
+
+{
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d'), vid = $('vid');
+const sizeSel = $('size');
+sizeSel.innerHTML += BoltCV.SIZES.map(s => `<option value="${s[0]}">${s[0]} × ${s[2].toFixed(2)}</option>`).join('');
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+sizeSel.value = store.get('bolt-size') || '1/4-20';
+let ref = store.get('bolt-ref'), last = null, lastImg = null, lastRoi = false, stream = null, timer = 0, wake = null;
+const showRef = () => $('refInfo').textContent = ref ? `Reference saved (pitch/D ${ref.pPerD.toFixed(3)}, depth ${ref.depthRatio.toFixed(2)}×P)` : 'No reference saved';
+showRef();
+
+// ---------- inspection area (ROI), normalised to the video frame ----------
+let roi = store.get('bolt-roi'), roiEdit = false, drag = null;
+
+function toGray(img, maxSide, useRoi) {
+  const w0 = img.videoWidth || img.naturalWidth || img.width, h0 = img.videoHeight || img.naturalHeight || img.height;
+  let sx = 0, sy = 0, sw = w0, sh = h0;
+  if (useRoi && roi) { sx = roi.x * w0; sy = roi.y * h0; sw = roi.w * w0; sh = roi.h * h0; }
+  const k = Math.min(1, maxSide / Math.max(sw, sh)), W = Math.max(8, Math.round(sw * k)), H = Math.max(8, Math.round(sh * k));
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, sx, sy, sw, sh, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data, g = new Uint8ClampedArray(W * H);
+  for (let i = 0; i < W * H; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+  return { c, g, W, H };
+}
+
+function draw(src, W, H, r) {
+  cv.width = W; cv.height = H; ctx.drawImage(src, 0, 0, W, H);
+  if (!r || !r.geom) return;
+  const G = r.geom, P = (u, v) => [G.mx + u * G.ux + v * G.vx, G.my + u * G.uy + v * G.vy], lw = Math.max(1.5, W / 450);
+  const L = G.len, U = i => G.us[G.s0 + Math.max(0, Math.min(L - 1, Math.round(i)))];
+  const vmax = Math.max(...G.top.filter(Number.isFinite), ...G.bot.filter(Number.isFinite)) * 1.25;
+  r.flags.filter(f => f.b - f.a < 0.95).forEach(f => {
+    const a = U(f.a * L), b = U(f.b * L);
+    ctx.fillStyle = f.sev >= 3 ? 'rgba(255,60,70,.32)' : 'rgba(240,165,58,.32)';
+    ctx.beginPath(); [P(a, -vmax), P(b, -vmax), P(b, vmax), P(a, vmax)].forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.fill();
+  });
+  ctx.setLineDash([6, 5]); ctx.strokeStyle = 'rgba(111,147,255,.7)'; ctx.lineWidth = lw * 0.7;
+  ctx.beginPath(); ctx.moveTo(...P(G.us[0], 0)); ctx.lineTo(...P(G.us[G.us.length - 1], 0)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = '#6f93ff'; ctx.lineWidth = lw;
+  [[G.top, 1], [G.bot, -1]].forEach(([e, s]) => { ctx.beginPath(); let st = false; e.forEach((d, k) => { if (!Number.isFinite(d)) { st = false; return; } const p = P(G.us[k], s * d); st ? ctx.lineTo(...p) : ctx.moveTo(...p); st = true; }); ctx.stroke(); });
+  (r.crests || []).forEach(c => {
+    if (c.edge) return; const s = c.side === 'top' ? 1 : -1, p = P(U(c.u), s * (c.r + lw * 2));
+    ctx.fillStyle = c.issues.length ? '#ff5a5f' : '#3fca73'; ctx.beginPath(); ctx.arc(p[0], p[1], lw * 1.8, 0, 7); ctx.fill();
+  });
+  ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = lw * 0.6;
+  [0, L - 1].forEach(i => { ctx.beginPath(); ctx.moveTo(...P(U(i), -vmax)); ctx.lineTo(...P(U(i), vmax)); ctx.stroke(); });
+}
+
+const COL = { PASS: 'var(--ok)', CHECK: 'var(--warn)', FAIL: 'var(--bad)' };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function report(r) {
+  last = r;
+  const tag = $('tag');
+  if (!r.ok) { tag.style.setProperty('--c', 'var(--line)'); $('verdict').textContent = 'No read'; $('vsub').textContent = r.error; $('flags').innerHTML = ''; $('met').innerHTML = ''; $('map').innerHTML = ''; return; }
+  tag.style.setProperty('--c', COL[r.verdict]);
+  $('verdict').textContent = r.verdict;
+  const m = r.metrics || {};
+  $('vsub').textContent = r.score != null ? `Score ${r.score}/100 · ${m.threads} threads read` : 'Threads not detected';
+  $('map').innerHTML = r.flags.filter(f => f.b - f.a < 0.95).map(f => `<i class="s${f.sev}" style="left:${(f.a * 100).toFixed(1)}%;width:${Math.max(1.5, (f.b - f.a) * 100).toFixed(1)}%"></i>`).join('');
+  $('flags').innerHTML = r.flags.length ? r.flags.map(f => `<li class="s${f.sev}"><strong>${esc(f.kind)}${f.b - f.a < 0.95 ? ` · ${Math.round(f.a * 100)}–${Math.round(f.b * 100)}% from head` : ''}</strong>${esc(f.msg)}</li>`).join('') : '<li class="ok"><strong>No defects found</strong>Crest depth, spacing, helix phase and straightness all within limits.</li>';
+  const rows = [];
+  if (m.pitchMm != null) rows.push(['Pitch', `${m.pitchMm.toFixed(3)} mm (nominal ${m.nomPitch.toFixed(2)})`], ['Thread depth', `${m.depthMm.toFixed(2)} mm`]);
+  if (m.pitchPx != null) rows.push(['Pitch in image', `${m.pitchPx.toFixed(1)} px`], ['Depth / pitch', `${m.depthRatio.toFixed(2)} (ISO 0.61)`], ['Pitch variation', `${(m.pitchCV * 100).toFixed(1)}%`], ['Helix offset', `${m.phase.toFixed(2)} P (expect 0.50)`], ['Edge noise', `${(m.noise * 100).toFixed(0)}% of depth${m.noise > 0.25 ? ' (high)' : ''}`], ['Bow', `${(m.bow * 100).toFixed(1)}% of Ø`], ['Taper', `${(m.taper * 100).toFixed(1)}%`]);
+  $('met').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+}
+
+function run(src, maxSide, useRoi) {
+  const { c, g, W, H } = toGray(src, maxSide, useRoi);
+  const t0 = performance.now(), r = BoltCV.analyze(g, W, H, { size: sizeSel.value, ref, shadow: $('shadow').value, smooth: $('smooth').value });
+  draw(c, W, H, r); report(r); lastImg = src; lastRoi = !!useRoi;
+  $('hint').textContent = r.ok ? `Analysed in ${Math.round(performance.now() - t0)} ms${useRoi && roi ? ' · inspection area' : ''}${r.shadow ? ` · shadow on ${r.shadow.length > 1 ? 'both sides' : 'one side'} ignored` : ''}` : '';
+  return r;
+}
+
+function loadFile(f) {
+  if (!f) return; stopLive();
+  const img = new Image(); img.onload = () => { run(img, 1100); URL.revokeObjectURL(img.src); };
+  img.onerror = () => $('msg').textContent = 'Could not read that image.'; img.src = URL.createObjectURL(f);
+}
+$('snap').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
+$('up').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
+
+function demo(kind) {
+  stopLive();
+  const W = 960, H = 600, o = { good: {}, strip: { strip: [0.45, 0.62] }, cross: { cross: [0.3, 0.5] } }[kind];
+  o.shadow = [9, 15, 9, 0.45]; o.rough = 2.5;
+  const g = BoltCV.synth(W, H, o), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), id = x.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) { id.data[4 * i] = g[i]; id.data[4 * i + 1] = g[i] * 1.01; id.data[4 * i + 2] = g[i] * 1.03; id.data[4 * i + 3] = 255; }
+  x.putImageData(id, 0, 0); const keep = sizeSel.value; sizeSel.value = 'M8'; run(c, 960); sizeSel.value = keep;
+  $('msg').textContent = 'Sample: a synthetic M8 bolt with a cast shadow and rough, jagged edges. The blue trace is the smoothed outline that gets measured.';
+}
+document.querySelectorAll('[data-demo]').forEach(b => b.onclick = () => demo(b.dataset.demo));
+
+// ---------- live camera ----------
+function stopLive() {
+  clearTimeout(timer); timer = 0; if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+  if (wake) { wake.release().catch(() => {}); wake = null; }
+  roiEdit = false; $('view').classList.remove('roi'); $('roiBtn').textContent = 'Set inspection area';
+  $('liveTag').style.display = 'none'; $('liveBtn').textContent = 'Live camera'; $('msg').textContent = '';
+}
+function liveTick() {
+  if (!stream) return;
+  if (vid.videoWidth) {
+    if (roiEdit) drawRoiEditor();
+    else { const r = run(vid, 720, true); onFrame(r); }
+  }
+  timer = setTimeout(liveTick, roiEdit ? 60 : 200);
+}
+async function startLive() {
+  const dev = $('camSel').value;
+  stream = await navigator.mediaDevices.getUserMedia({ video: dev ? { deviceId: { exact: dev }, width: { ideal: 1920 } } : { facingMode: 'environment', width: { ideal: 1920 } }, audio: false });
+  vid.srcObject = stream; await vid.play();
+  $('liveTag').style.display = 'block'; $('liveBtn').textContent = 'Freeze'; $('msg').textContent = '';
+  try { wake = await navigator.wakeLock.request('screen'); } catch {}
+  listCameras();
+  liveTick();
+}
+async function listCameras() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const cur = $('camSel').value;
+    $('camSel').innerHTML = '<option value="">Back camera</option>' + devs.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || 'Camera ' + (i + 1))}</option>`).join('');
+    $('camSel').value = devs.some(d => d.deviceId === cur) ? cur : '';
+  } catch {}
+}
+$('liveBtn').onclick = async () => {
+  if (stream) { stopLive(); $('msg').textContent = 'Live view frozen on the last frame.'; return; }
+  try { await startLive(); }
+  catch (e) {
+    stream = null;
+    $('msg').textContent = 'Live video is blocked here. It needs https or localhost and camera permission. Use Take photo, or open this page over https (or as a local file on a laptop).';
+  }
+};
+$('camSel').onchange = async () => { store.set('bolt-cam', $('camSel').value); if (stream) { stopLive(); try { await startLive(); } catch { $('msg').textContent = 'Could not open that camera.'; } } };
+document.addEventListener('visibilitychange', async () => { if (stream && document.visibilityState === 'visible' && !wake) { try { wake = await navigator.wakeLock.request('screen'); } catch {} } });
+
+// ---------- ROI editor ----------
+function drawRoiEditor() {
+  const w0 = vid.videoWidth, h0 = vid.videoHeight, k = Math.min(1, 960 / Math.max(w0, h0)), W = Math.round(w0 * k), H = Math.round(h0 * k);
+  cv.width = W; cv.height = H; ctx.drawImage(vid, 0, 0, W, H);
+  const r = drag ? drag.r : roi;
+  if (r) {
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(r.x * W, r.y * H, r.w * W, r.h * H); ctx.fill('evenodd');
+    ctx.strokeStyle = '#6f93ff'; ctx.lineWidth = 3; ctx.strokeRect(r.x * W, r.y * H, r.w * W, r.h * H);
+  }
+  $('hint').textContent = 'Drag a box around the bolt, then tap Done';
+}
+function canvasPt(e) {
+  const b = cv.getBoundingClientRect(), s = Math.min(b.width / cv.width, b.height / cv.height), ox = (b.width - cv.width * s) / 2, oy = (b.height - cv.height * s) / 2;
+  return [Math.max(0, Math.min(1, (e.clientX - b.left - ox) / (cv.width * s))), Math.max(0, Math.min(1, (e.clientY - b.top - oy) / (cv.height * s)))];
+}
+cv.addEventListener('pointerdown', e => { if (!roiEdit) return; cv.setPointerCapture(e.pointerId); const [x, y] = canvasPt(e); drag = { x0: x, y0: y, r: { x, y, w: 0, h: 0 } }; });
+cv.addEventListener('pointermove', e => { if (!drag) return; const [x, y] = canvasPt(e); drag.r = { x: Math.min(x, drag.x0), y: Math.min(y, drag.y0), w: Math.abs(x - drag.x0), h: Math.abs(y - drag.y0) }; });
+cv.addEventListener('pointerup', () => { if (!drag) return; if (drag.r.w > 0.05 && drag.r.h > 0.05) { roi = drag.r; store.set('bolt-roi', roi); } drag = null; });
+$('roiBtn').onclick = async () => {
+  if (roiEdit) { roiEdit = false; $('view').classList.remove('roi'); $('roiBtn').textContent = 'Set inspection area'; $('hint').textContent = ''; return; }
+  if (!stream) { try { await startLive(); } catch { $('msg').textContent = 'Start the live camera first.'; return; } }
+  roiEdit = true; $('view').classList.add('roi'); $('roiBtn').textContent = 'Done';
+};
+$('roiClr').onclick = () => { roi = null; store.set('bolt-roi', null); $('msg').textContent = 'Using the full camera frame.'; };
+
+$('smooth').onchange = $('shadow').onchange = () => { if (lastImg && !stream) run(lastImg, lastImg instanceof HTMLCanvasElement ? 960 : 1100, lastRoi); };
+sizeSel.onchange = () => { store.set('bolt-size', sizeSel.value); if (lastImg && !stream) run(lastImg, lastImg instanceof HTMLCanvasElement ? 960 : 1100, lastRoi); };
+$('saveRef').onclick = () => {
+  if (!last || !last.metrics || last.metrics.pPerD == null) { $('msg').textContent = 'Analyse a good bolt first, then save it.'; return; }
+  ref = { pPerD: last.metrics.pPerD, depthRatio: last.metrics.depthRatio }; store.set('bolt-ref', ref); showRef();
+};
+$('clrRef').onclick = () => { ref = null; store.set('bolt-ref', null); showRef(); };
+
+// ---------- machine link + per-bolt decisions ----------
+const link = new SorterLink();
+const AG = Object.assign({ minFrames: 6, minFail: 2, frac: 0.3 }, store.get('bolt-ag2') || {});
+$('agMin').value = AG.minFrames; $('agFail').value = AG.minFail; $('agFrac').value = AG.frac;
+['agMin', 'agFail', 'agFrac'].forEach(id => $(id).onchange = () => {
+  AG.minFrames = Math.max(1, Math.round(+$('agMin').value || 6)); AG.minFail = Math.max(1, Math.round(+$('agFail').value || 2)); AG.frac = Math.max(0, Math.min(1, +$('agFrac').value || 0.3));
+  store.set('bolt-ag2', AG);
+});
+$('autoSend').checked = store.get('bolt-auto') ?? true;
+$('autoSend').onchange = () => store.set('bolt-auto', $('autoSend').checked);
+
+const VNAME = { g: 'GOOD', b: 'BAD', e: 'EMPTY' };
+let M = null, cur = null, hist = store.get('bolt-hist') || [];
+const mMsg = t => $('mMsg').textContent = t || '';
+
+function newBolt(cyc) {
+  if (cur && !cur.logged && cur.sorting) logBolt(cur, cur.sent ? cur.sent.v : null);
+  cur = { cyc, frames: [], sent: null, call: null, awaitAt: 0, thumb: null, worst: 1e9, t: Date.now() };
+  renderSweep();
+}
+function onFrame(r) {
+  if (!cur || cur.sent || !M || !(M.st === 'INSPECT' || M.st === 'AWAIT_VERDICT')) return;
+  const f = { empty: !r.ok && /No bolt/.test(r.error || ''), ok: r.ok, v: r.ok ? r.verdict : null, kinds: (r.flags || []).filter(x => x.sev >= 2).map(x => x.kind), at: M.st === 'INSPECT' ? M.prog : 1 };
+  cur.frames.push(f);
+  const score = r.ok ? (r.score ?? 100) : 200;
+  if (!cur.thumb || score < cur.worst) { cur.worst = score; cur.thumb = thumb(); }
+  cur.call = decideBolt(cur.frames, AG);
+  renderSweep(); renderCall();
+  maybeDecide();
+}
+function thumb() {
+  const t = document.createElement('canvas'), k = 168 / Math.max(cv.width, 1); t.width = 168; t.height = Math.max(1, Math.round(cv.height * k));
+  t.getContext('2d').drawImage(cv, 0, 0, t.width, t.height); return t.toDataURL('image/jpeg', 0.7);
+}
+function maybeDecide() {
+  if (!cur || cur.sent || !M || M.st !== 'AWAIT_VERDICT' || M.v || !link.connected) return;
+  if (!stream) { mMsg('Camera is off: the machine will use its no-verdict fallback. Start Live camera.'); return; }
+  const enough = cur.frames.length >= AG.minFrames, late = cur.awaitAt && Date.now() - cur.awaitAt > 2500;
+  if (!enough && !late) return;
+  cur.call = decideBolt(cur.frames, AG); renderCall();
+  if (!cur.call.v) return;
+  if ($('autoSend').checked) sendVerdict(cur.call.v, cur.call.reason);
+  else mMsg(`Suggested ${VNAME[cur.call.v]}: tap Send GOOD or Send BAD.`);
+}
+function sendVerdict(v, reason) {
+  if (!cur) return;
+  cur.sent = { v, reason }; renderCall();
+  link.send(`v ${v} ${(reason || '').slice(0, 44)}`).then(r => { if (r && r.ok === 0) mMsg(r.msg); else mMsg(''); }).catch(e => { cur.sent = null; mMsg('Verdict not delivered: ' + e.message); });
+}
+$('sendG').onclick = () => sendVerdict('g', 'operator: good');
+$('sendB').onclick = () => sendVerdict('b', 'operator: bad');
+
+function renderSweep() {
+  const sw = $('sweep'); sw.querySelectorAll('i').forEach(i => i.remove());
+  if (!cur) return;
+  sw.insertAdjacentHTML('beforeend', cur.frames.map(f => `<i class="${f.empty ? 'none' : !f.ok ? 'unread' : f.v}" style="left:${(f.at * 100).toFixed(1)}%"></i>`).join(''));
+}
+function renderCall() {
+  const c = cur && cur.call, s = cur && cur.sent;
+  $('curCall').textContent = s ? `Sent ${VNAME[s.v]} · ${s.reason}` : c && c.v ? `Calling ${VNAME[c.v]} so far · ${c.reason}` : cur ? `${cur.frames.length} frames` : '';
+  $('curCall').style.color = (s || c) && (s || c).v === 'g' ? 'var(--ok)' : (s || c) && (s || c).v === 'b' ? 'var(--bad)' : '';
+}
+function logBolt(b, finalV) {
+  b.logged = true;
+  const read = b.frames.filter(f => f.ok).length, fail = b.frames.filter(f => f.v === 'FAIL').length;
+  hist.unshift({ cyc: b.cyc, v: finalV || (b.sent && b.sent.v) || '?', sentV: b.sent && b.sent.v, reason: (b.sent && b.sent.reason) || (M && M.lr) || '', frames: b.frames.length, read, fail, thumb: b.thumb, t: Date.now() });
+  hist = hist.slice(0, 30); store.set('bolt-hist', hist); renderHist();
+}
+function renderHist() {
+  $('hist').innerHTML = hist.length ? hist.map(h => `<li class="${h.v}">${h.thumb ? `<img src="${h.thumb}" alt="">` : '<img alt="">'}<div><b>#${h.cyc} ${VNAME[h.v] || h.v}</b><div class="sub">${esc(h.reason)}${h.sentV && h.sentV !== h.v ? ` · machine sorted ${VNAME[h.v]}` : ''}<br>${h.frames} frames, ${h.read} read, ${h.fail} fail · ${new Date(h.t).toLocaleTimeString()}</div></div></li>`).join('') : '<li class="sub">No bolts sorted yet. Connect the machine and press Run.</li>';
+}
+$('histClr').onclick = () => { hist = []; store.set('bolt-hist', hist); renderHist(); };
+renderHist();
+
+const CYCLE_STATES = ['FEED', 'SETTLE', 'INSPECT', 'AWAIT_VERDICT', 'SORT', 'RELEASE', 'CLOSE'];
+link.on('status', s => {
+  M = s;
+  const st = $('mState'); st.textContent = s.st.replace('_', ' '); st.className = s.st;
+  $('mSub').textContent = s.flt ? s.flt : ['Stopped', 'Running', 'Finishing this bolt'][s.run] + ` · ${(s.el / 1000).toFixed(1)} s`;
+  $('nG').textContent = s.n[0]; $('nB').textContent = s.n[1]; $('nE').textContent = s.n[2];
+  $('sweepCur').style.left = (s.prog * 100).toFixed(1) + '%';
+  if (CYCLE_STATES.includes(s.st) && s.cyc && (!cur || cur.cyc !== s.cyc)) newBolt(s.cyc);
+  $('curNo').textContent = cur ? '#' + cur.cyc : '—';
+  if (cur && cur.cyc === s.cyc) {
+    if (['SORT', 'RELEASE', 'CLOSE'].includes(s.st)) cur.sorting = true;
+    if (s.v && !cur.sent) { cur.sent = { v: s.v, reason: 'set by machine' }; renderCall(); }
+    if (s.st === 'AWAIT_VERDICT' && !cur.awaitAt) cur.awaitAt = Date.now();
+    if (cur.sorting && !cur.logged && ['WAIT_BOLT', 'IDLE'].includes(s.st) && s.lv) logBolt(cur, s.lv);
+  }
+  const waiting = s.st === 'AWAIT_VERDICT' && !s.v;
+  $('sendG').disabled = $('sendB').disabled = !waiting;
+  if (s.st === 'INSPECT' && !stream) mMsg('The tube is turning but the camera is off. Start Live camera.');
+  else if (s.st !== 'AWAIT_VERDICT' && $('mMsg').textContent.startsWith('The tube')) mMsg('');
+  maybeDecide();
+});
+link.on('open', name => { $('linkChip').textContent = name; $('linkChip').classList.add('on'); mMsg(''); });
+link.on('close', why => { $('linkChip').textContent = why; $('linkChip').classList.remove('on'); });
+document.querySelectorAll('.mach [data-cmd]').forEach(b => b.onclick = () => link.send(b.dataset.cmd).then(r => r && r.msg && mMsg(r.msg)).catch(e => mMsg(e.message)));
+$('btBtn').onclick = async () => { try { await link.connectBLE(); } catch (e) { if (e.name !== 'NotFoundError') mMsg(e.message); } };
+$('wifiBtn').onclick = async () => {
+  const a = $('addr').value; store.set('bolt-addr', a);
+  try { await link.connectHTTP(a); }
+  catch { mMsg(location.protocol === 'https:' ? 'This page is on https, so the browser blocks plain-http requests to the ESP32. Use Connect Bluetooth, or open this file locally on a laptop.' : `Could not reach ${a}. Join the "BoltSorter" Wi-Fi (or the shared network) and try again.`); }
+};
+$('addr').value = store.get('bolt-addr') || '192.168.4.1';
+const cam = store.get('bolt-cam'); if (cam) $('camSel').innerHTML += `<option value="${esc(cam)}">Last used camera</option>`, $('camSel').value = cam;
+demo('strip');
+}
+</script>
+</body>
+</html>
